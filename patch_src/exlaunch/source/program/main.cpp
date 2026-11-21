@@ -2,6 +2,7 @@
 #include "lib/patch/patcher_impl.hpp"
 
 #include "program/config.hpp"
+#include "program/recovery_policy.hpp"
 #include "program/diagnostics.hpp"
 #include "program/diagnostics_profile.hpp"
 #include "program/loggers.hpp"
@@ -952,9 +953,10 @@ struct DestinationState {
     bool inWater;
 
     bool IsSafe() const {
-        return valid && !dead && !abyss && keeperValid && colliderValid &&
-               (grounded ||
-                (ocoop::config::Get().bubbleWaterCountsAsGround && inWater));
+        return ocoop::recovery::CanAnchor({
+            valid, dead, abyss, false, keeperValid, colliderValid,
+            grounded, inWater, ocoop::config::Get().bubbleWaterCountsAsGround
+        });
     }
 };
 
@@ -3017,6 +3019,11 @@ namespace patch0009 {
         return getPlayerActor(actor, 0) == actor;
     }
 
+    static bool IsTerminalPartner(void* actor) {
+        return (sP1Terminal && IsP1(actor)) ||
+               (sP2Terminal && IsP2(actor));
+    }
+
 #if PATCH_0035_ENABLED && PATCH_0003_ENABLED
     static bool SeedP1DelayedRecoverySafety(void* actor, void* recovery) {
         if (!sP1Terminal || !IsP1(actor) || !IsPtr8((uintptr_t)recovery))
@@ -3037,6 +3044,12 @@ namespace patch0009 {
         if (!IsPtr8((uintptr_t)partner)) {
             Logging.Log("[OCoop] PATCH-0035 p1 delayed recovery seed pending: no live partner actor=%p",
                         actor);
+            return false;
+        }
+        // A terminal/airborne P2 is not a valid seed for P1's delayed recovery.
+        // Leave Odyssey's existing safety point untouched when no safe anchor exists.
+        if (sP2Terminal || !bubblesafety::Evaluate(partner).IsSafe()) {
+            Logging.Log("[OCoop] P0-RECOVERY p1 seed deferred: partner not grounded or terminal");
             return false;
         }
 
@@ -3333,6 +3346,23 @@ namespace patch0009 {
 }
 #endif
 
+#if PATCH_0043_ENABLED || PATCH_0044_ENABLED
+namespace bubblesafety {
+/* A recovery anchor must be both physically safe and outside the private
+ * terminal-death lifecycle. The native status query can lag our P1/P2 flags
+ * during death transitions; checking both closes that window. */
+static bool IsEligibleAnchor(const void* partner) {
+    if (!IsPtr8((uintptr_t)partner))
+        return false;
+#if PATCH_0009_ENABLED && PATCH_0010_ENABLED
+    if (patch0009::IsTerminalPartner((void*)partner))
+        return false;
+#endif
+    return Evaluate(partner).IsSafe();
+}
+}  // namespace bubblesafety
+#endif
+
 /* char* fields need no alignment; statically known to be C strings
  * (rs::getInitPlayerModelName / getInitCapTypeName read them as such). */
 static bool IsStrPtr(uintptr_t p) {
@@ -3607,7 +3637,10 @@ HOOK_DEFINE_TRAMPOLINE(Patch0003RecoverToPartner) {
                 }
             }
 
-            if (IsPtr8((uintptr_t)partner)) {
+            // Never overwrite the native recovery point with an airborne,
+            // captured-but-ungrounded, Abyss or terminal teammate position.
+            // If no safe teammate exists, Orig retains Odyssey's own destination.
+            if (bubblesafety::IsEligibleAnchor(partner)) {
                 const float* pos = getTrans(partner);
                 const float* grav = getGravity((const void*)actor);
                 if (pos && grav) {
@@ -3623,7 +3656,12 @@ HOOK_DEFINE_TRAMPOLINE(Patch0003RecoverToPartner) {
                                 PATCH_0003_POP_UP_OFFSET);
                 }
             } else {
-                Logging.Log("[OCoop] PATCH-0003 no partner for actor=%p (solo recovery)", (void*)actor);
+                static unsigned blocked = 0;
+                if (blocked < 16) {
+                    ++blocked;
+                    Logging.Log("[OCoop] P0-RECOVERY start native destination kept: no safe partner actor=%p count=%u",
+                                (void*)actor, blocked);
+                }
             }
         }
         Orig(self, height);
@@ -3659,7 +3697,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0003ReassertDestination) {
                     else if (partner == nullptr)
                         partner = p;
                 }
-                if (IsPtr8((uintptr_t)partner) && selfIdx >= 0 && selfIdx < 4) {
+                if (selfIdx >= 0 && selfIdx < 4 &&
+                    bubblesafety::IsEligibleAnchor(partner)) {
                     const float* pre = getSafetyPoint((void*)recovery);
                     const float* pos = getTrans(partner);
                     const float* grav = getGravity((const void*)actor);
@@ -3747,7 +3786,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0044HoldBubblePopForSafePartner) {
             bubblesafety::Evaluate(partner);
         /* A terminal/Abyss partner belongs to the existing miss/respawn
          * lifecycle. Fail open there instead of holding both players forever. */
-        if (destination.dead || destination.abyss) {
+        if (destination.dead || destination.abyss ||
+            patch0009::IsTerminalPartner(partner)) {
             sHolding[selfIdx] = false;
             return true;
         }
@@ -4610,7 +4650,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
 #if PATCH_0043_ENABLED
         const bubblesafety::DestinationState destination =
             bubblesafety::Evaluate(partner);
-        if (!destination.IsSafe()) {
+        if (!destination.IsSafe() ||
+            patch0009::IsTerminalPartner(partner)) {
             sHold[selfIdx] = 0;
 #if PATCH_0045_ENABLED
             /* The confirmed disturbing shift begins during rocket exit, before

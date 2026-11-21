@@ -23,10 +23,40 @@ foreach ($line in @(Get-Content -LiteralPath $ChecksumsPath)) {
     if ((Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash -ne $Matches[1].ToUpperInvariant()) { throw "Package checksum mismatch: $relative" }
 }
 
+# Portable Ryujinx keeps its user data under "portable" next to
+# Ryujinx.exe. Search upward from the EXTRACTED PACKAGE (not the current
+# PowerShell working directory), so nested folders such as
+# Ryujinx/P0-Tests/OdysseyLocalCoop-v0.1.0-alpha.5/install.ps1 work.
+function Find-PortableRyujinxRoot {
+    param([string]$StartDirectory)
+    $directory = [IO.DirectoryInfo]::new([IO.Path]::GetFullPath($StartDirectory))
+    while ($null -ne $directory) {
+        $executable = Join-Path $directory.FullName "Ryujinx.exe"
+        $portable = Join-Path $directory.FullName "portable"
+        if ((Test-Path -LiteralPath $executable -PathType Leaf) -and
+            (Test-Path -LiteralPath $portable -PathType Container)) {
+            return $directory.FullName
+        }
+        $directory = $directory.Parent
+    }
+    return $null
+}
+
 if ([string]::IsNullOrWhiteSpace($ContentsRoot)) {
     if ($Target -eq "Ryujinx") {
-        if ([string]::IsNullOrWhiteSpace($env:APPDATA)) { throw "APPDATA is unavailable; specify -ContentsRoot." }
-        $ContentsRoot = Join-Path $env:APPDATA "Ryujinx\mods\contents"
+        $portableRoot = Find-PortableRyujinxRoot -StartDirectory $PackageRoot
+        if ($portableRoot) {
+            $ContentsRoot = Join-Path (Join-Path (Join-Path $portableRoot "portable") "mods") "contents"
+            Write-Host "Portable Ryujinx detected: $portableRoot"
+        } else {
+            # Preserve conventional installations. Print the fallback to make it
+            # obvious if the installer is not located below the portable root.
+            if ([string]::IsNullOrWhiteSpace($env:APPDATA)) {
+                throw "Portable Ryujinx not found above this package and APPDATA is unavailable. Place it under the folder containing Ryujinx.exe and portable, or pass -ContentsRoot."
+            }
+            $ContentsRoot = Join-Path $env:APPDATA "Ryujinx\mods\contents"
+            Write-Warning "No portable Ryujinx root found above the package. Using the standard APPDATA location. For portable installations, move the package under the folder containing Ryujinx.exe and portable, or pass -ContentsRoot."
+        }
     } else {
         throw "Atmosphere installation is experimental; specify the SD card's atmosphere/contents path with -ContentsRoot."
     }

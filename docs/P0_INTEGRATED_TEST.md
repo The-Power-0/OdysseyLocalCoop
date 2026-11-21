@@ -12,11 +12,27 @@ This is an **integration-only branch**. Do not merge it into main; review and me
 
 ## Install/test procedure
 
-1. Back up Ryujinx save data (legally obtained Odyssey 1.0.0), disable conflicting gameplay mods and install the development artifact from this branch's successful **Build release package** GitHub Actions run.
-2. Set `debug.menu.enabled=1` in the installed `romfs/OCoop/settings.ini`. Configure two separate controllers and select the game's `Two Players` option.
-3. Use P1 `D-pad Up` to select the P0 preset and `A` twice to mark or replay in-scene safe positions. `Minus` hides or shows the lab (normal map input is reserved while the lab is enabled).
-4. Read [P0_TEST_LAB.md](P0_TEST_LAB.md), [P0_TRIAGE.md](P0_TRIAGE.md) and [P0_STORY_TRACE.md](P0_STORY_TRACE.md). For pre-boss event rollback, use the local `scripts/p0-fixtures.ps1` with the emulator **closed**, not a mod operation.
-5. Capture redacted `[OCoop]` logs, exact game/emulator/commit/controller state, and post-restart story progress in the relevant GitHub issue.
+1. Back up Ryujinx save data (legally obtained Odyssey 1.0.0), disable conflicting gameplay mods and download the development artifact from this branch's successful **Build release package** GitHub Actions run. Extract the package into a subfolder **inside your portable Ryujinx directory**, so the installer searches upward and finds the siblings `Ryujinx.exe` and `portable/`.
+2. With Ryujinx closed, open PowerShell beside the extracted `install.ps1` and run `./install.ps1` **without arguments**. It automatically installs to `portable/mods/contents/0100000000010000`. Use `-ContentsRoot "D:\\Ryujinx\\portable\\mods\\contents"` only when the extracted package is outside that folder tree. The installer logs its chosen destination; inspect it before launching the game.
+3. Set `debug.menu.enabled=1` in the installed `romfs/OCoop/settings.ini`. Configure two separate controllers and select the game's `Two Players` option.
+4. Use P1 `D-pad Up` to select the P0 preset and `A` twice to mark or replay in-scene safe positions. `Minus` hides or shows the lab (normal map input is reserved while the lab is enabled).
+5. Read [P0_TEST_LAB.md](P0_TEST_LAB.md), [P0_TRIAGE.md](P0_TRIAGE.md) and [P0_STORY_TRACE.md](P0_STORY_TRACE.md). For pre-boss event rollback, use the local `scripts/p0-fixtures.ps1` with the emulator **closed**, not a mod operation.
+6. Capture redacted `[OCoop]` logs, exact game/emulator/commit/controller state, and post-restart story progress in the relevant GitHub issue.
+
+
+For example, the following **nested** layout is supported without `-ContentsRoot`:
+
+```text
+Ryujinx/
+  Ryujinx.exe
+  portable/
+  P0-Test/
+    OdysseyLocalCoop-v0.1.0-alpha.5/
+      install.ps1
+      payload/
+      PACKAGE_MANIFEST.json
+      CHECKSUMS.txt
+```
 
 ## Limits
 

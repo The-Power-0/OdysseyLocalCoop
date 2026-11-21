@@ -29,6 +29,21 @@ The saved marker expires when the stage is rebuilt or changes. A captured, termi
 
 **The current prototype cannot yet jump to Metro/Lake/Lost Kingdom or force an uncleared boss story scenario.** That needs audited 1.0.0 ChangeStageInfo/scene APIs and a disposable-save sandbox; do not misrepresent a teleport into a completed kingdom as a valid boss-victory reproduction. It can, however, replay player positions and health repeatedly within a loaded scene without traversing the area again.
 
+## Local repeatable save fixtures (companion utility)
+
+For Metro boss/painting events whose story state is consumed by completion, use the opt-in **local save fixture manager**. This is a separate PowerShell convenience utility because the mod must not silently rewrite campaign progress. It stores your **own** save snapshots outside the repository, and only works with Ryujinx **closed**.
+
+```powershell
+# Replace the path with the exact Ryujinx 'Open User Save Directory' path.
+$SaveDir = "PATH_TO_YOUR_ODYSSEY_SAVE"
+./scripts/p0-fixtures.ps1 -Action Capture -Scenario MetroBoss -SaveDir $SaveDir
+
+# Later, after the boss victory/hang, with the emulator closed:
+./scripts/p0-fixtures.ps1 -Action Restore -Scenario MetroBoss -SaveDir $SaveDir -ConfirmRestore
+```
+
+Other fixture names: `LakePainting` and `LostLava`. `-Action List` lists locally captured fixtures. A restore verifies SHA-256 hashes and preserves a timestamped backup of the previous active save. You must reach or otherwise obtain each starting checkpoint **once** to capture it; there are no supplied copyrighted game saves. Save file handling is local only. This is **not an in-game one-click scene reset** and cannot substitute for verifying stage progression transitions.
+
 ## Required next stages
 
 1. Replace the temporary reused scoreboard UI with a dedicated, readable menu layout and explicit Exit/Reset actions.

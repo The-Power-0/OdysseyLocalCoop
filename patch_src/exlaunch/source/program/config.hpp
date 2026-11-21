@@ -11,6 +11,7 @@ struct Settings {
 
     char p2Body[64];
     char p2Cap[64];
+    float p2SpawnOffset; // Zero keeps upstream positioning unchanged.
 
     float respawnDelaySeconds;
 

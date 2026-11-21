@@ -1,0 +1,19 @@
+name: Host unit tests (spawn positioning)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Compile and run pure C++ gameplay math tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -I patch_src/exlaunch/source tests/spawn_offset_test.cpp -o /tmp/ocoop-spawn-test
+          /tmp/ocoop-spawn-test

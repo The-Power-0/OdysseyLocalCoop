@@ -2,6 +2,7 @@
 #include "lib/patch/patcher_impl.hpp"
 
 #include "program/config.hpp"
+#include "program/spawn_offset.hpp"
 #include "program/diagnostics.hpp"
 #include "program/diagnostics_profile.hpp"
 #include "program/loggers.hpp"
@@ -3455,6 +3456,18 @@ HOOK_DEFINE_INLINE(Patch0001SpawnP2) {
         Logging.Log("[OCoop] PATCH-0001 B: P2 constructed %p", p2);
 
         *(int*)(patch0001::sPiiCopy + 0x10) = p2port;
+
+        // Opt-in P2 spacing. Zero preserves original positioning exactly.
+        // PlayerInitInfo layout is game-version-specific: translation +0x28,
+        // quaternion (x,y,z,w) +0x34. Requires Ryujinx validation before release.
+        const float spawnOffset = ocoop::config::Get().p2SpawnOffset;
+        if (spawnOffset != 0.0f) {
+            float* translation = reinterpret_cast<float*>(patch0001::sPiiCopy + 0x28);
+            const float* quaternion = reinterpret_cast<const float*>(patch0001::sPiiCopy + 0x34);
+            const bool applied = ocoop::spawn::ShiftAlongLocalX(translation, quaternion, spawnOffset);
+            Logging.Log("[OCoop] PATCH-0001 B: P2 spawn-offset=%.0f applied=%d",
+                        spawnOffset, applied ? 1 : 0);
+        }
 
 #if PATCH_0001_P2_COSTUME_ENABLED
         /* Override P2's body/cap model names (PlayerInitInfo +0x18/+0x20).

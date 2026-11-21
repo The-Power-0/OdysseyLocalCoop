@@ -9,13 +9,14 @@ Back to [README](README.md) · [All issues](https://github.com/The-Power-0/Odyss
 
 **Snapshot:** November 20, 2026 (America/Indiana/Indianapolis)  
 **Starting baseline:** Gudui upstream `v0.1.0-alpha.5` source, Super Mario Odyssey `1.0.0`.  
-**Tracked backlog at snapshot:** **47 open issues** (`#2`–`#48`): 20 labeled `bug`, 27 labeled `enhancement`. Priorities in titles: P0 × 4, P1 × 29, P2 × 10, P3 × 3, P4 × 1.  
+**Tracked backlog at snapshot:** **48 open issues** (`#2`–`#48` plus `#53`; PR numbers are separate): 20 labeled `bug`, 28 labeled `enhancement`. Priorities in titles: P0 × 4, P1 × 30, P2 × 10, P3 × 3, P4 × 1.  
 **Fork releases:** none. **Merged fork-specific gameplay commits on `main`:** none.
 
 ## Current milestone board
 
 | Workstream | Issues / PRs | State | Next evidence required |
 | :-- | :-- | :-- | :-- |
+| [P0 Test Lab](https://github.com/The-Power-0/OdysseyLocalCoop/issues/53) | [Draft PR #54](https://github.com/The-Power-0/OdysseyLocalCoop/pull/54) | **Prototype build + tests verified; gameplay pending** | Inspect HUD and controls in Ryujinx; audit direct scenario warp/save state gates before expanding presets |
 | Foundation and first opt-in improvement | [PR #1](https://github.com/The-Power-0/OdysseyLocalCoop/pull/1), [#46](https://github.com/The-Power-0/OdysseyLocalCoop/issues/46) | **Build verified; gameplay pending** | Two-controller Ryujinx test at offset 0 and 120, scene transitions, negative offset, recovery |
 | Metro and Lake progression blockers | [#2](https://github.com/The-Power-0/OdysseyLocalCoop/issues/2), [#3](https://github.com/The-Power-0/OdysseyLocalCoop/issues/3), [draft PR #51](https://github.com/The-Power-0/OdysseyLocalCoop/pull/51) | **Diagnostics drafted; not fixed** | P1/P2 event traces, repeatable stage-load reproduction and persisted progress proof |
 | Severe death / recovery failures | [#4](https://github.com/The-Power-0/OdysseyLocalCoop/issues/4), [#5](https://github.com/The-Power-0/OdysseyLocalCoop/issues/5), [#6](https://github.com/The-Power-0/OdysseyLocalCoop/issues/6), [#7](https://github.com/The-Power-0/OdysseyLocalCoop/issues/7), [draft PR #50](https://github.com/The-Power-0/OdysseyLocalCoop/pull/50) | **Anchor guard build verified; not fixed** | P2 zero-health lifecycle and simultaneous-lava native recovery/miss tests |
@@ -78,6 +79,13 @@ When a meaningful milestone changes, update the snapshot date and relevant row a
 ```
 
 ## Update history
+
+### 2026-11-20 — In-game P0 Test Lab prototype
+
+- **Change:** Created QA issue [#53](https://github.com/The-Power-0/OdysseyLocalCoop/issues/53) and draft [PR #54](https://github.com/The-Power-0/OdysseyLocalCoop/pull/54): opt-in scenario HUD, scene-local player position capture/replay, P2 one-heart setup and local Ryujinx save-fixture capture/restore utility. Linked to #2–#5.
+- **Tests:** [C++ menu model](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44863470922), [PowerShell fixture round-trip and tamper checks](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44863470946), and [full ExLaunch build/package/verify](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44863470965) **passed**. No in-game rendering, positioning, or P0 reproduction claim.
+- **Remaining blockers:** Direct stage/scenario jump, boss-story state fixtures, native dual-lava trigger, and restart-proof in-game checkpoints are **not implemented**. The existing scene-local mark/replay is not a substitute for reproducing an uncleared boss.
+- **Next gate:** Review menu legibility/input behavior in Ryujinx with two controllers, then implement audited stage/scenario API and safe disposable test-save workflow.
 
 ### 2026-11-20 — P0 audit, first safety patch and story diagnostics
 

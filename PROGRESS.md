@@ -17,8 +17,8 @@ Back to [README](README.md) · [All issues](https://github.com/The-Power-0/Odyss
 | Workstream | Issues / PRs | State | Next evidence required |
 | :-- | :-- | :-- | :-- |
 | Foundation and first opt-in improvement | [PR #1](https://github.com/The-Power-0/OdysseyLocalCoop/pull/1), [#46](https://github.com/The-Power-0/OdysseyLocalCoop/issues/46) | **Build verified; gameplay pending** | Two-controller Ryujinx test at offset 0 and 120, scene transitions, negative offset, recovery |
-| Metro and Lake progression blockers | [#2](https://github.com/The-Power-0/OdysseyLocalCoop/issues/2), [#3](https://github.com/The-Power-0/OdysseyLocalCoop/issues/3) | **Open / not fixed** | Reliable reproductions, traces, then verified scene transitions and persisted progress |
-| Severe death / recovery failures | [#4](https://github.com/The-Power-0/OdysseyLocalCoop/issues/4), [#5](https://github.com/The-Power-0/OdysseyLocalCoop/issues/5), [#6](https://github.com/The-Power-0/OdysseyLocalCoop/issues/6), [#7](https://github.com/The-Power-0/OdysseyLocalCoop/issues/7) | **Open / not fixed** | Safe recovery state decisions and tested multi-player lava/abyss cases |
+| Metro and Lake progression blockers | [#2](https://github.com/The-Power-0/OdysseyLocalCoop/issues/2), [#3](https://github.com/The-Power-0/OdysseyLocalCoop/issues/3), [draft PR #51](https://github.com/The-Power-0/OdysseyLocalCoop/pull/51) | **Diagnostics drafted; not fixed** | P1/P2 event traces, repeatable stage-load reproduction and persisted progress proof |
+| Severe death / recovery failures | [#4](https://github.com/The-Power-0/OdysseyLocalCoop/issues/4), [#5](https://github.com/The-Power-0/OdysseyLocalCoop/issues/5), [#6](https://github.com/The-Power-0/OdysseyLocalCoop/issues/6), [#7](https://github.com/The-Power-0/OdysseyLocalCoop/issues/7), [draft PR #50](https://github.com/The-Power-0/OdysseyLocalCoop/pull/50) | **Anchor guard build verified; not fixed** | P2 zero-health lifecycle and simultaneous-lava native recovery/miss tests |
 | Independent health, capture and events | [#8](https://github.com/The-Power-0/OdysseyLocalCoop/issues/8), [#9](https://github.com/The-Power-0/OdysseyLocalCoop/issues/9), [#10](https://github.com/The-Power-0/OdysseyLocalCoop/issues/10), [#15](https://github.com/The-Power-0/OdysseyLocalCoop/issues/15), [#20](https://github.com/The-Power-0/OdysseyLocalCoop/issues/20), [#21](https://github.com/The-Power-0/OdysseyLocalCoop/issues/21), [#48](https://github.com/The-Power-0/OdysseyLocalCoop/issues/48) | **Backlog** | Player-aware interaction tests and validated fixes |
 | Core technical architecture | [#38](https://github.com/The-Power-0/OdysseyLocalCoop/issues/38), [#39](https://github.com/The-Power-0/OdysseyLocalCoop/issues/39), [#40](https://github.com/The-Power-0/OdysseyLocalCoop/issues/40), [#41](https://github.com/The-Power-0/OdysseyLocalCoop/issues/41) | **Backlog** | Reviewable, bounded refactors with unchanged binary behavior |
 | Regression, CI, release gates | [#42](https://github.com/The-Power-0/OdysseyLocalCoop/issues/42), [#43](https://github.com/The-Power-0/OdysseyLocalCoop/issues/43), [#45](https://github.com/The-Power-0/OdysseyLocalCoop/issues/45) | **Partial foundation** | Kingdom matrix, automated regression checks, explicit acceptance evidence |
@@ -78,6 +78,13 @@ When a meaningful milestone changes, update the snapshot date and relevant row a
 ```
 
 ## Update history
+
+### 2026-11-20 — P0 audit, first safety patch and story diagnostics
+
+- **Change:** Opened [draft PR #50](https://github.com/The-Power-0/OdysseyLocalCoop/pull/50) for recovery anchor safety and [draft PR #51](https://github.com/The-Power-0/OdysseyLocalCoop/pull/51) for read-only painting/stage-change diagnostics. Added detailed reproduction protocols and investigation comments to [#2](https://github.com/The-Power-0/OdysseyLocalCoop/issues/2), [#3](https://github.com/The-Power-0/OdysseyLocalCoop/issues/3), [#4](https://github.com/The-Power-0/OdysseyLocalCoop/issues/4) and [#5](https://github.com/The-Power-0/OdysseyLocalCoop/issues/5).
+- **Tests:** [PR #50 host tests](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44862576006) and [PR #50 full build/package/verify](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44862576036) passed. [PR #51 push build/package/verify](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44862646232) passed. No P0 gameplay verification yet.
+- **Still open:** All four P0 issues. A safe-target guard is not yet a complete fix for the zero-HP death lifecycle, double-fall recovery, the Metro boss softlock or Lake painting loop.
+- **Next gate:** Capture controlled, redacted Ryujinx 1.0.0 reproductions, validate recovery and transition behavior, then make issue-specific fixes in separate PRs. Do not merge either draft as a verified gameplay fix before that evidence.
 
 ### 2026-11-20 — Issue tracker and first development baseline
 

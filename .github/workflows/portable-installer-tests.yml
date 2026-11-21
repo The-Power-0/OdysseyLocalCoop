@@ -1,0 +1,71 @@
+name: Portable Ryujinx installer regression tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Verify nested portable detection, override, and fallback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP ("ryujinx-portable-test-" + $env:GITHUB_RUN_ID)
+          $ryujinx = Join-Path $root "MyPortableRyujinx"
+          $package = Join-Path $ryujinx "P0-Testing/extracted/OdysseyLocalCoop-v0.1.0-alpha.5"
+          $env:APPDATA = Join-Path $root "AppDataWrongTarget"
+
+          function New-FixturePackage {
+            param([string]$Directory)
+            New-Item -ItemType Directory -Force -Path $Directory | Out-Null
+            $rel = "payload/contents/0100000000010000/romfs/OCoop/settings.ini"
+            $source = Join-Path $Directory $rel
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $source) | Out-Null
+            Set-Content -LiteralPath $source -Value "debug.menu.enabled=1"
+            $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+            $manifest = @{
+              schema_version = 1
+              program_id = "0100000000010000"
+              version = "portable-installer-test"
+              files = @(@{ path = $rel; sha256 = $hash })
+            }
+            $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $Directory "PACKAGE_MANIFEST.json")
+            Set-Content -LiteralPath (Join-Path $Directory "CHECKSUMS.txt") -Value "$hash *$rel"
+            Copy-Item -LiteralPath "./scripts/install.ps1" -Destination (Join-Path $Directory "install.ps1")
+          }
+
+          New-Item -ItemType Directory -Force -Path (Join-Path $ryujinx "portable") | Out-Null
+          Set-Content -LiteralPath (Join-Path $ryujinx "Ryujinx.exe") -Value "stub"
+          New-FixturePackage -Directory $package
+
+          # Running with no arguments must pick portable, not APPDATA.
+          & (Join-Path $package "install.ps1")
+          $relative = "0100000000010000/romfs/OCoop/settings.ini"
+          $portableOut = Join-Path $ryujinx ("portable/mods/contents/" + $relative)
+          if (-not (Test-Path -LiteralPath $portableOut -PathType Leaf)) {
+            throw "Nested portable root detection failed"
+          }
+          $wrong = Join-Path $env:APPDATA ("Ryujinx/mods/contents/" + $relative)
+          if (Test-Path -LiteralPath $wrong) { throw "Installer incorrectly wrote into APPDATA" }
+
+          # Explicit -ContentsRoot always has precedence over autodetection.
+          $customRoot = Join-Path $root "override/mods/contents"
+          & (Join-Path $package "install.ps1") -ContentsRoot $customRoot
+          if (-not (Test-Path -LiteralPath (Join-Path $customRoot $relative))) {
+            throw "ContentsRoot override was ignored"
+          }
+
+          # Existing nonportable installs still default to APPDATA.
+          $outside = Join-Path $root "DownloadedTestPackage"
+          New-FixturePackage -Directory $outside
+          & (Join-Path $outside "install.ps1")
+          if (-not (Test-Path -LiteralPath $wrong -PathType Leaf)) {
+            throw "Standard APPDATA fallback failed"
+          }

@@ -2,6 +2,7 @@
 #include "lib/patch/patcher_impl.hpp"
 
 #include "program/config.hpp"
+#include "program/p0_test_lab.hpp"
 #include "program/diagnostics.hpp"
 #include "program/diagnostics_profile.hpp"
 #include "program/loggers.hpp"
@@ -2662,6 +2663,15 @@ HOOK_DEFINE_TRAMPOLINE(Patch0020ShineCollector) {
 #endif
 #endif
 
+namespace p0debug {
+static void Create(void*, const void*);
+static void End(void*);
+static void OnLayoutStart(void*);
+static void DetachForSceneReset();
+static void Tick(void*);
+static bool InterceptMapOpen();
+} // namespace p0debug
+
 /* StageSceneLayout C1: (this, name, LayoutInitInfo&, PlayerHolder*,
  * SubCameraRenderer*), verified by file_list.yml and Ghidra. */
 HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutCtor) {
@@ -2686,6 +2696,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutCtor) {
 #if PATCH_0019_ENABLED
         coinrace::Create(self, layoutInitInfo);
 #endif
+        p0debug::Create(self, layoutInitInfo);
     }
 };
 HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutEnd) {
@@ -2697,6 +2708,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutEnd) {
         coinrace::End(self);
 #endif
         p2hud::End(self);
+        p0debug::End(self);
         Orig(self);
     }
 };
@@ -2707,6 +2719,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutStart) {
     static void Callback(void* self) {
         Orig(self);
         p2hud::OnLayoutStart(self);
+        p0debug::OnLayoutStart(self);
 #if PATCH_0019_ENABLED
         coinrace::OnLayoutStart(self);
 #endif
@@ -2720,6 +2733,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutStart) {
  * while a later StageSceneLayout ctor naturally arms the next transition. */
 HOOK_DEFINE_INLINE(Patch0024ChangeWorldDetach) {
     static void Callback(exl::hook::InlineCtx*) {
+        p0debug::DetachForSceneReset();
         bool hadP2Hud = false;
         bool hadCompetitionHud = false;
 #if PATCH_0014_ENABLED
@@ -3332,6 +3346,218 @@ namespace patch0009 {
     }
 }
 #endif
+
+
+/* Developer P0 Test Lab. Separate scene-owned layout using the existing
+ * custom scoreboard asset to avoid bundling proprietary game UI. All actions
+ * are gated behind debug.menu.enabled=1 and only run from P1 control(). */
+namespace p0debug {
+using ocoop::p0lab::Menu;
+using ocoop::p0lab::Command;
+static Menu sMenu{};
+static void* sHud = nullptr;
+static void* sOwner = nullptr;
+static bool sHiddenBySceneEnd = false;
+struct Vec2 { float x, y; };
+struct Anchor {
+    bool valid = false;
+    float pos[2][3] = {};
+};
+static Anchor sAnchors[4] = {};
+static const char* kNames[4] = {
+    "METRO BOSS", "LAKE PAINT", "P2 LAVA 1HP", "DOUBLE FALL"
+};
+static const int kIssue[4] = {2, 3, 4, 5};
+static const char* sMessage = "UP NEXT, A ARM";
+static char16_t sNameText[48] = {};
+static char16_t sMsgText[48] = {};
+static char16_t sIssueText[12] = {};
+
+static void ToUtf16(char16_t* out, unsigned cap, const char* str) {
+    if (!out || cap == 0) return;
+    unsigned idx = 0;
+    while (str && str[idx] && idx + 1 < cap) {
+        out[idx] = static_cast<unsigned char>(str[idx]);
+        ++idx;
+    }
+    out[idx] = 0;
+}
+static void SetText(const char* pane, const char16_t* value) {
+    if (!IsPtr8((uintptr_t)sHud)) return;
+    auto set = OcoopFn<void (*)(void*, const char*, const char16_t*)>(
+        PatchOffsets::LayoutSetPaneString);
+    set((void*)((uintptr_t)sHud + 0x08), pane, value);
+}
+static void SetTextPair(const char* a, const char* b, const char16_t* value) {
+    SetText(a, value); SetText(b, value);
+}
+static void Render() {
+    if (!IsPtr8((uintptr_t)sHud) || !sMenu.visible) return;
+    ToUtf16(sNameText, 48, kNames[sMenu.selected]);
+    ToUtf16(sMsgText, 48, sMenu.armed ? "A CONFIRM!" : sMessage);
+    sIssueText[0] = u'#';
+    sIssueText[1] = u'0' + kIssue[sMenu.selected];
+    sIssueText[2] = 0;
+    SetTextPair("LblPlayer1", "LblPlayer1Sh", u"P0 TEST LAB");
+    SetTextPair("LblPlayer2", "LblPlayer2Sh", sIssueText);
+    SetTextPair("CoinP1", "CoinP1Sh", sNameText);
+    SetTextPair("CoinP2", "CoinP2Sh", sMsgText);
+}
+static void HideDecorations() {
+    if (!IsPtr8((uintptr_t)sHud)) return;
+    auto hide = OcoopFn<void (*)(void*, const char*)>(PatchOffsets::LayoutHidePane);
+    void* layout = (void*)((uintptr_t)sHud + 0x08);
+    const char* panes[] = {
+        "IconGoldCoin", "IconPurpleCoin", "IconP1Coin", "IconP2Coin",
+        "IconMoonTotal", "MoonP1_1", "MoonP1_2", "MoonP1_3", "MoonP1_4", "MoonP1_5",
+        "MoonP2_1", "MoonP2_2", "MoonP2_3", "MoonP2_4", "MoonP2_5"
+    };
+    for (const char* pane : panes) hide(layout, pane);
+}
+static void Create(void* owner, const void* initInfo) {
+    if (!ocoop::config::Get().debugMenuEnabled ||
+        !IsPtr8((uintptr_t)owner) || !IsPtr8((uintptr_t)initInfo))
+        return;
+    sMenu = {};
+    for (auto& anchor : sAnchors) anchor.valid = false;
+    sMessage = "UP NEXT, A ARM";
+    sOwner = owner;
+    sHud = ::operator new(0x130);
+    if (!IsPtr8((uintptr_t)sHud)) { sOwner = nullptr; return; }
+    auto ctor = OcoopFn<void (*)(void*, const char*)>(PatchOffsets::LayoutActorCtor);
+    auto init = OcoopFn<void (*)(void*, const void*, const char*, const char*)>(
+        PatchOffsets::LayoutActorInit);
+    auto appear = OcoopFn<void (*)(void*)>(PatchOffsets::LayoutActorAppear);
+    auto setPaneTrans = OcoopFn<void (*)(void*, const char*, const Vec2&)>(
+        PatchOffsets::LayoutSetPaneLocalTrans2);
+    ctor(sHud, "[OCoop] Developer P0 Test Lab");
+    init(sHud, initInfo, "OCoopScoreBoard", nullptr);
+    const Vec2 pos = {-340.0f, -160.0f};
+    setPaneTrans((void*)((uintptr_t)sHud + 0x08), "All", pos);
+    HideDecorations();
+    Render();
+    appear(sHud);
+    sHiddenBySceneEnd = false;
+    Logging.Log("[OCoop] P0-LAB created. One-scene checkpoint menu: UP cycle, A twice execute, MINUS toggle.");
+}
+static void DetachForSceneReset() {
+    sOwner = nullptr; sHud = nullptr;
+    sHiddenBySceneEnd = false;
+    for (auto& anchor : sAnchors) anchor.valid = false;
+}
+static void End(void* owner) {
+    if (owner != sOwner) return;
+    if (IsPtr8((uintptr_t)sHud)) {
+        auto kill = OcoopFn<void (*)(void*)>(PatchOffsets::AlLayoutActorKill);
+        kill(sHud);
+    }
+    sHiddenBySceneEnd = true;
+}
+static void OnLayoutStart(void* owner) {
+    if (owner != sOwner || !IsPtr8((uintptr_t)sHud) || !sHiddenBySceneEnd) return;
+    auto appear = OcoopFn<void (*)(void*)>(PatchOffsets::LayoutActorAppear);
+    if (sMenu.visible) appear(sHud);
+    sHiddenBySceneEnd = false;
+    Render();
+}
+static bool InterceptMapOpen() {
+    return ocoop::config::Get().debugMenuEnabled && IsPtr8((uintptr_t)sHud);
+}
+static bool ResolvePlayers(void* self, void** p1, void** p2) {
+    if (!IsPtr8((uintptr_t)self)) return false;
+    auto getPlayer = OcoopFn<void* (*)(const void*, int)>(
+        PatchOffsets::AlGetPlayerActor);
+    *p1 = getPlayer(self, 0);
+    *p2 = getPlayer(self, 1);
+    return IsPtr8((uintptr_t)*p1) && IsPtr8((uintptr_t)*p2) && *p1 == self;
+}
+static bool SafeToMove(void* p1, void* p2) {
+    if (!IsPtr8((uintptr_t)p1) || !IsPtr8((uintptr_t)p2)) return false;
+    if (patch0009::sP1Terminal || patch0009::sP2Terminal) return false;
+    return bubblesafety::Evaluate(p1).IsSafe() &&
+           bubblesafety::Evaluate(p2).IsSafe();
+}
+static void SetupHealthP2() {
+    if (patch0009::sP2Terminal || !patch0009::sP2HealthValid) {
+        sMessage = "P2 TERMINAL";
+        return;
+    }
+    patch0009::sP2Health = 1;
+    p2hud::NotifyHealth(1, patch0009::sP2MaxHealth);
+    sMessage = "P2 HP IS 1";
+    Logging.Log("[OCoop] P0-LAB issue=%d P2 private health prepared 1/%d",
+                kIssue[sMenu.selected], patch0009::sP2MaxHealth);
+}
+static void Execute(void* p1, void* p2) {
+    if (!SafeToMove(p1, p2)) {
+        sMessage = "NEED SAFE GROUND";
+        Logging.Log("[OCoop] P0-LAB action blocked: player ungrounded/captured/terminal");
+        return;
+    }
+    const unsigned idx = sMenu.selected;
+    auto getTrans = OcoopFn<const float* (*)(const void*)>(
+        PatchOffsets::AlGetTrans);
+    auto setTrans = OcoopFn<void (*)(void*, const float*)>(
+        PatchOffsets::AlSetTrans);
+    Anchor& a = sAnchors[idx];
+    if (!a.valid) {
+        const float* p[2] = {getTrans(p1), getTrans(p2)};
+        if (!p[0] || !p[1]) { sMessage = "INVALID POSITION"; return; }
+        for (int n = 0; n < 2; ++n)
+            for (int d = 0; d < 3; ++d)
+                a.pos[n][d] = p[n][d];
+        a.valid = true;
+        sMessage = "MARKED - A REPLAY";
+    } else {
+        // Same-scene only; no persistent pointers and no save/quest mutation.
+        setTrans(p1, a.pos[0]);
+        setTrans(p2, a.pos[1]);
+        sMessage = "POSITION REPLAY";
+    }
+    if (idx >= 2) SetupHealthP2();
+    Logging.Log("[OCoop] P0-LAB issue=%d %s p1=(%.0f,%.0f,%.0f) p2=(%.0f,%.0f,%.0f)",
+                kIssue[idx], a.valid ? "mark/replay" : "rejected",
+                a.pos[0][0], a.pos[0][1], a.pos[0][2],
+                a.pos[1][0], a.pos[1][1], a.pos[1][2]);
+}
+static void Tick(void* actor) {
+    if (!ocoop::config::Get().debugMenuEnabled ||
+        !IsPtr8((uintptr_t)sHud) || !IsPtr8((uintptr_t)actor)) return;
+    void* p1 = nullptr;
+    void* p2 = nullptr;
+    if (!ResolvePlayers(actor, &p1, &p2)) return;
+    auto getPort = OcoopFn<int (*)(int)>(PatchOffsets::AlGetPlayerControllerPort);
+    const int port = getPort(0);
+    if (port < 0) return;
+    auto minus = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerMinus);
+    auto up = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerUp);
+    auto decide = OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsTriggerUiDecide);
+    const bool toggle = minus(port);
+    if (toggle) {
+        ocoop::p0lab::Apply(sMenu, Command::Toggle);
+        if (sMenu.visible) {
+            auto appear = OcoopFn<void (*)(void*)>(PatchOffsets::LayoutActorAppear);
+            appear(sHud);
+            sMessage = "UP NEXT, A ARM";
+        } else {
+            auto kill = OcoopFn<void (*)(void*)>(PatchOffsets::AlLayoutActorKill);
+            kill(sHud);
+        }
+        Render();
+        return;
+    }
+    if (!sMenu.visible) return;
+    if (up(port)) {
+        ocoop::p0lab::Apply(sMenu, Command::Next);
+        sMessage = sAnchors[sMenu.selected].valid ? "A REPLAY" : "A MARK";
+        Render();
+    } else if (decide((const void*)((uintptr_t)p1 + 0x20))) {
+        if (ocoop::p0lab::Apply(sMenu, Command::Confirm).execute)
+            Execute(p1, p2);
+        Render();
+    }
+}
+} // namespace p0debug
 
 /* char* fields need no alignment; statically known to be C strings
  * (rs::getInitPlayerModelName / getInitCapTypeName read them as such). */
@@ -4418,6 +4644,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
         if (!IsPtr8(player))
             return;
 
+        p0debug::Tick(self);
+
 #if PATCH_0010_ENABLED
         /* PATCH-0010 uses this existing live per-player control path as its
          * frame counter source. This runs before PATCH-0006's bubble selector
@@ -5199,6 +5427,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0013CapReturnOwner) {
  * the pad-trigger family would happily index. */
 HOOK_DEFINE_TRAMPOLINE(Patch0048P2MapOpenTrigger) {
     static bool Callback(const void* sceneObjHolder) {
+        if (p0debug::InterceptMapOpen())
+            return false; // Minus belongs to the dev lab while enabled.
         if (Orig(sceneObjHolder))
             return true;
 
@@ -5658,6 +5888,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0052SequenceKillSceneForRestart) {
         }
 
         const unsigned aliveBefore = *((unsigned char*)scene + 0x28);
+        p0debug::DetachForSceneReset();
         auto killStageScene =
             OcoopFn<void (*)(void*)>(PatchOffsets::StageSceneKill);
         if (aliveBefore != 0)

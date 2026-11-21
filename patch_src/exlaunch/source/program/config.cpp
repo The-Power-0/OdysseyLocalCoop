@@ -18,6 +18,7 @@ Settings sSettings = {
     "MarioColorLuigi", "MarioColorLuigi",
     10.0f,
     3000.0f, 1.5f, 10.0f, true,
+    false, // developer P0 Test Lab off by default
     true, 10, -560.0f, 260.0f, -64.0f,
     true, 3, 0.0f, 0.0f,
 };
@@ -28,6 +29,7 @@ Settings Defaults() {
         "MarioColorLuigi", "MarioColorLuigi",
         10.0f,
         3000.0f, 1.5f, 10.0f, true,
+    false, // developer P0 Test Lab off by default
         true, 10, -560.0f, 260.0f, -64.0f,
         true, 3, 0.0f, 0.0f,
     };
@@ -164,6 +166,8 @@ void ParseConfigText(const char* text, size_t length, Settings* settings) {
             settings->bubbleCooldownSeconds = value;
         } else if (KeyEquals(cur, keyEnd, "bubble.water_counts_as_ground")) {
             settings->bubbleWaterCountsAsGround = value != 0.0f;
+        } else if (KeyEquals(cur, keyEnd, "debug.menu.enabled")) {
+            settings->debugMenuEnabled = value != 0.0f;
         } else if (KeyEquals(cur, keyEnd, "competition.coin.enabled")) {
             settings->coinRaceEnabled = value != 0.0f;
         } else if (KeyEquals(cur, keyEnd, "competition.coin.target")) {
@@ -232,6 +236,7 @@ void LogSettings(const char* state) {
                 state, sSettings.bubbleDistance, sSettings.bubbleHoldSeconds,
                 sSettings.bubbleCooldownSeconds,
                 sSettings.bubbleWaterCountsAsGround ? 1 : 0, kConfigPath);
+    Logging.Log("[OCoop] P0-LAB config enabled=%d (development-only; no stage/save warp)", sSettings.debugMenuEnabled ? 1 : 0);
     Logging.Log("[OCoop] CONFIG-0001 %s competition coin=%d/%d moon=%d/%d panel=(%.0f,%.0f)",
                 state, sSettings.coinRaceEnabled ? 1 : 0, sSettings.coinRaceTarget,
                 sSettings.moonRaceEnabled ? 1 : 0, sSettings.moonRaceTarget,

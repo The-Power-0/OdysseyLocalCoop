@@ -16,6 +16,7 @@ constexpr unsigned kGameTicksPerSecond = 60;
 Settings sSettings = {
     1.12f, 1.65f, 500.0f, 2500.0f, 0.05f,
     "MarioColorLuigi", "MarioColorLuigi",
+    0.0f,
     10.0f,
     3000.0f, 1.5f, 10.0f, true,
     true, 10, -560.0f, 260.0f, -64.0f,
@@ -26,6 +27,7 @@ Settings Defaults() {
     return Settings{
         1.12f, 1.65f, 500.0f, 2500.0f, 0.05f,
         "MarioColorLuigi", "MarioColorLuigi",
+    0.0f,
         10.0f,
         3000.0f, 1.5f, 10.0f, true,
         true, 10, -560.0f, 260.0f, -64.0f,
@@ -144,6 +146,8 @@ void ParseConfigText(const char* text, size_t length, Settings* settings) {
             CopyString(settings->p2Cap, sizeof(settings->p2Cap), valueBegin, lineEnd);
         } else if (!ParseFloat(valueBegin, lineEnd, &value)) {
             continue;
+        } else if (KeyEquals(cur, keyEnd, "player.p2.spawn_offset")) {
+            settings->p2SpawnOffset = value;
         } else if (KeyEquals(cur, keyEnd, "camera.zoom.base")) {
             settings->cameraBaseZoom = value;
         } else if (KeyEquals(cur, keyEnd, "camera.zoom.max")) {
@@ -196,6 +200,7 @@ void Apply(Settings settings) {
                                           settings.cameraSeparationStart + 1.0f,
                                           20000.0f);
     settings.cameraLerp = Clamp(settings.cameraLerp, 0.001f, 1.0f);
+    settings.p2SpawnOffset = Clamp(settings.p2SpawnOffset, -1000.0f, 1000.0f);
     settings.respawnDelaySeconds = Clamp(settings.respawnDelaySeconds, 0.0f, 60.0f);
     settings.bubbleDistance = Clamp(settings.bubbleDistance, 100.0f, 20000.0f);
     settings.bubbleHoldSeconds = Clamp(settings.bubbleHoldSeconds, 0.0f, 10.0f);
@@ -225,9 +230,9 @@ void LogSettings(const char* state) {
                 state, sSettings.cameraBaseZoom, sSettings.cameraMaxZoom,
                 sSettings.cameraSeparationStart, sSettings.cameraSeparationFull,
                 sSettings.cameraLerp);
-    Logging.Log("[OCoop] CONFIG-0001 %s p2 body=\"%s\" cap=\"%s\" respawn=%.2fs",
+    Logging.Log("[OCoop] CONFIG-0001 %s p2 body=\"%s\" cap=\"%s\" respawn=%.2fs spawn-offset=%.0f",
                 state, sSettings.p2Body, sSettings.p2Cap,
-                sSettings.respawnDelaySeconds);
+                sSettings.respawnDelaySeconds, sSettings.p2SpawnOffset);
     Logging.Log("[OCoop] CONFIG-0001 %s bubble distance=%.0f hold=%.2fs cooldown=%.2fs water-ground=%d path=%s",
                 state, sSettings.bubbleDistance, sSettings.bubbleHoldSeconds,
                 sSettings.bubbleCooldownSeconds,

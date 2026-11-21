@@ -1,168 +1,162 @@
 # Odyssey Local Co-op
 
-Odyssey Local Co-op adds a second full player actor to **Super Mario Odyssey 1.0.0** so two people can play together on one shared screen. It is a local co-op mod, not an online or networked multiplayer mod.
+**An independent, stability-first development fork of [Gudui's Odyssey Local Co-op](https://github.com/Gudui/OdysseyLocalCoop).** Our goal is a reliable, polished, full-player couch co-op experience for Super Mario Odyssey—starting with an end-to-end two-player story playthrough.
 
-[![Mario and the green second player together in the Sand Kingdom](media/odyssey-local-coop.png)](https://vimeo.com/1211084414/41139bee79?share=copy&fl=sv&fe=ci)
+[![Two fully controllable Mario players in the Sand Kingdom](media/odyssey-local-coop.png)](https://vimeo.com/1211084414/41139bee79?share=copy&fl=sv&fe=ci)
 
-_[Watch the 95-second gameplay showcase on Vimeo.](https://vimeo.com/1211084414/41139bee79?share=copy&fl=sv&fe=ci)_
+*Original upstream gameplay showcase. The image is not a demonstration of additional features developed by this fork.*
 
-This is an early alpha. Save backups are recommended, game behavior outside the tested paths may differ from vanilla, and several important limitations are documented in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+[Development status](#development-status) · [Progress tracker](PROGRESS.md) · [Issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues) · [Roadmap](#roadmap) · [Installation](#installation) · [Building](#building-from-source)
 
-## Support status
+> [!IMPORTANT]
+> **This is an experimental community fork, not a new released mod.** The `main` branch currently retains upstream `v0.1.0-alpha.5` gameplay code. Work in branches and pull requests is **not** included in `main` or an official fork release. The inherited playable target remains **Super Mario Odyssey 1.0.0**, with **two full players on one shared screen**. Four-player mode, Odyssey 1.3.0, split-screen, and online play are **not supported features of this fork**.
 
-| Target | Status | Notes |
-|---|---|---|
-| Super Mario Odyssey | **1.0.0 only** | Other game versions are unsupported. |
-| Ryujinx | Primary target | The alpha build, installer, and gameplay work are tested here. |
-| Atmosphere / physical Switch | Experimental | The package includes the required generated `main.npdm`; gameplay and Cascade-to-Sand travel have been tested on actual hardware. |
+## Development status
 
-## What the mod adds
+| Area | Current state | Evidence / next step |
+| :-- | :-- | :-- |
+| Upstream baseline | **Inherited, early alpha** | [Original project](https://github.com/Gudui/OdysseyLocalCoop) · [upstream known issues](KNOWN_ISSUES.md) |
+| Fork `main` | **Upstream gameplay baseline** | No fork-specific gameplay changes merged |
+| First fork change | **Draft / build verified, gameplay untested** | [PR #1: opt-in P2 spawn spacing](https://github.com/The-Power-0/OdysseyLocalCoop/pull/1) · [issue #46](https://github.com/The-Power-0/OdysseyLocalCoop/issues/46) |
+| Automated validation for PR #1 | **Passed** | [Host tests](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44857762871) · [build, package and verification](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44857762895) |
+| Story-wide co-op testing | **Not established for this fork** | [Kingdom test matrix #42](https://github.com/The-Power-0/OdysseyLocalCoop/issues/42) |
+| Fork releases | **None published** | Do not mistake temporary CI artifacts for tested releases |
 
-- Two Mario player characters in the same stage, each controlled by a separate controller.
-- Pause-menu `Two Players` and `One Player` actions that safely start and end full-player co-op.
-- A distinct green costume for P2, configurable through `settings.ini`.
-- A shared camera that frames both players, zooms with distance, and accepts camera input from either controller.
-- Recovery bubbles that bring a fallen or separated player back toward their partner.
-- P2 support for tested stage doors and 2D sections.
-- Both players can hold a capture at the same time in tested scenarios.
-- Caps return to the player who threw them in tested paths.
-- Separate health tracking and a dedicated life display for P2.
-- An optional combined coin and Moon competition scoreboard with separate P1 and P2 scores and configurable targets.
+The original project's alpha is playable in tested scenarios, but has documented progression blockers and recovery bugs. A successful build or unit test **does not** establish that a gameplay fix works in Ryujinx or on physical Switch.
 
-The competition HUD is included in the normal release ZIP and requires no separate download, stock-file extraction, or asset-building step. Coin and Moon competition remain disabled by default because several scoring edge cases are still listed in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+**Live tracking:** [Open issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues?q=is%3Aissue%20is%3Aopen) · [Pull requests](https://github.com/The-Power-0/OdysseyLocalCoop/pulls) · [Actions](https://github.com/The-Power-0/OdysseyLocalCoop/actions) · [Progress ledger](PROGRESS.md)
 
-## Requirements
+## What already works in the upstream baseline
 
-- A legally obtained copy of Super Mario Odyssey **version 1.0.0**.
-- A current Ryujinx-compatible installation with the game already configured.
-- Two controllers configured as separate players before entering a stage.
-- The `OdysseyLocalCoop-v0.1.0-alpha.5.zip` release package.
+This fork inherits these features from Gudui's mod; they are **not new improvements made by this fork**:
 
-Start normally with P1, then select `Two Players` from Odyssey's pause menu. Connect the second controller when prompted. Select `One Player` from the same menu to return to solo play.
+- Two independent, fully controllable Mario actors using two separately configured controllers.
+- Pause-menu `Two Players` / `One Player` actions that rebuild the stage to enter or leave full-player co-op.
+- Configurable P2 costume and cap, using game-provided model names.
+- A shared camera with midpoint tracking, separation-based zoom, and right-stick input from either player.
+- Recovery bubbles for falls and excessive player separation in tested scenarios.
+- P2 support for tested stage doors, 2D sections, and other player-aware interactions.
+- Simultaneous captures and cap return ownership in tested paths.
+- Separate P2 health tracking and a scene-owned life display.
+- An optional bundled coin / Moon competition scoreboard (disabled by default because of known edge cases).
 
-## Install on Ryujinx
+This is **local shared-screen co-op**, not the game's native Mario/Cappy separate-play mode.
 
-1. Download the release ZIP and its `.sha256` file from the GitHub release.
-2. Verify the archive hash:
+## Roadmap
 
+We will prioritize a dependable two-player campaign before optional multiplayer expansion. The table describes **plans and gates**, not promises of shipped features.
+
+| Phase | Focus | Exit gate | Tracking |
+| :-- | :-- | :-- | :-- |
+| 1 — Foundation | Reproducible builds, tests, code safety, small opt-in improvements | Build verified **and** in-game regression checks | [PR #1](https://github.com/The-Power-0/OdysseyLocalCoop/pull/1), [#42](https://github.com/The-Power-0/OdysseyLocalCoop/issues/42), [#43](https://github.com/The-Power-0/OdysseyLocalCoop/issues/43) |
+| 2 — Story stability | Metro/Lake softlocks, lava recovery, unsafe respawns | No known main-story progression blockers | [#2](https://github.com/The-Power-0/OdysseyLocalCoop/issues/2), [#3](https://github.com/The-Power-0/OdysseyLocalCoop/issues/3), [#4](https://github.com/The-Power-0/OdysseyLocalCoop/issues/4), [#5](https://github.com/The-Power-0/OdysseyLocalCoop/issues/5), [#6](https://github.com/The-Power-0/OdysseyLocalCoop/issues/6), [#7](https://github.com/The-Power-0/OdysseyLocalCoop/issues/7) |
+| 3 — Gameplay completeness | Health, captures, bosses, vehicles, cinematics, ownership | Both players can complete verified story interactions reliably | [#8](https://github.com/The-Power-0/OdysseyLocalCoop/issues/8), [#9](https://github.com/The-Power-0/OdysseyLocalCoop/issues/9), [#10](https://github.com/The-Power-0/OdysseyLocalCoop/issues/10), [#15](https://github.com/The-Power-0/OdysseyLocalCoop/issues/15), [#20](https://github.com/The-Power-0/OdysseyLocalCoop/issues/20), [#21](https://github.com/The-Power-0/OdysseyLocalCoop/issues/21) and [all issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues), [#47](https://github.com/The-Power-0/OdysseyLocalCoop/issues/47), [#48](https://github.com/The-Power-0/OdysseyLocalCoop/issues/48) |
+| 4 — Polish & compatibility | Camera, HUD, menus, controller experience, 1.3.0 evaluation | Separately tested feature builds and clear version support | [#22](https://github.com/The-Power-0/OdysseyLocalCoop/issues/22), [#24](https://github.com/The-Power-0/OdysseyLocalCoop/issues/24), [#33](https://github.com/The-Power-0/OdysseyLocalCoop/issues/33), [#36](https://github.com/The-Power-0/OdysseyLocalCoop/issues/36), [#44](https://github.com/The-Power-0/OdysseyLocalCoop/issues/44) |
+| 5 — Exploratory | Four-player, dynamic split-screen, online-co-op feasibility | Only graduate after prototypes pass real gameplay/performance testing | [#34](https://github.com/The-Power-0/OdysseyLocalCoop/issues/34), [#35](https://github.com/The-Power-0/OdysseyLocalCoop/issues/35), [#37](https://github.com/The-Power-0/OdysseyLocalCoop/issues/37) |
+
+See **[PROGRESS.md](PROGRESS.md)** for the dated workstream ledger, status definitions, and validation requirements. All individual proposals, blockers, and acceptance criteria are in [GitHub Issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues).
+
+### Tracking rules
+
+1. **Issues define scope and acceptance criteria.** Issue titles use `[P0]`–`[P4]` priority prefixes; `bug` and `enhancement` labels describe work type. `P0` means critical, and `P4` denotes research.
+2. **Pull requests contain code and review evidence.** A PR can have passing CI while remaining a draft until gameplay testing is documented.
+3. **Build verified ≠ gameplay verified ≠ released.** Mark each separately; no feature is described as supported merely because its source compiles.
+4. **Close issues only when acceptance criteria are met.** Link the merged PR, testing platform/version, and known limitations. Update [PROGRESS.md](PROGRESS.md) at milestones rather than duplicating every issue here.
+
+## Compatibility & safety
+
+| Target | Status |
+| :-- | :-- |
+| Super Mario Odyssey **1.0.0** | Upstream alpha target and only current baseline |
+| Ryujinx | Primary upstream-tested emulator target; fork changes need separate testing |
+| Atmosphere / physical Switch | **Experimental upstream** (limited physical testing); no new fork hardware claims |
+| Odyssey **1.3.0** | **Not supported**; [planned investigation #36](https://github.com/The-Power-0/OdysseyLocalCoop/issues/36) |
+| 3–4 players | **Not supported**; [future investigation #34](https://github.com/The-Power-0/OdysseyLocalCoop/issues/34) |
+
+Back up your saves before experimenting. The upstream [known issues](KNOWN_ISSUES.md) include Metro Kingdom's post-boss white screen and Lake Kingdom's painting transition loop, as well as severe Lost Kingdom lava recovery cases. Avoid assuming that anything in a draft branch fixes those defects.
+
+## Installation
+
+**There is currently no published release from this fork.** For the existing upstream alpha, obtain the `OdysseyLocalCoop-v0.1.0-alpha.5.zip` and corresponding SHA-256 file from the [original author's releases](https://github.com/Gudui/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.5). These instructions apply to that **upstream** package, not the experimental PR #1 artifact.
+
+1. Use a legally obtained copy of **Super Mario Odyssey 1.0.0**, already configured in Ryujinx, with two separately configured controllers.
+2. Download the upstream ZIP and its `.sha256` file, then check the ZIP hash:
    ```powershell
    Get-FileHash .\OdysseyLocalCoop-v0.1.0-alpha.5.zip -Algorithm SHA256
    ```
-
-3. Extract the ZIP and inspect `install.ps1` if desired.
-4. From the extracted package directory, run:
-
+3. Extract the package. Inspect `install.ps1` before running it, then from that directory:
    ```powershell
    Unblock-File .\install.ps1
    .\install.ps1
    ```
+4. Launch the game, enter a stage, select `Two Players` from the pause menu, and follow the controller prompt. Use `One Player` there to return to solo mode.
 
-   The installer verifies every packaged file before copying the mod into Ryujinx's per-title `mods/contents` directory. Existing files at the exact destination paths are backed up before replacement.
+The installer verifies packaged files and backs up files it replaces at the installation paths. To install manually, preserve the title-ID/`exefs`/`romfs` folder structure under Ryujinx's per-title mod directory. Do not mix executable and HUD files from different builds.
 
-5. Configure two separate controllers in Ryujinx, launch Super Mario Odyssey 1.0.0, enter a stage, and select `Two Players` from the pause menu.
+<details>
+<summary><strong>Configuration and troubleshooting</strong></summary>
 
-For a manual installation, copy the package's `payload/contents` directory into Ryujinx's `mods` directory, preserving the title-ID, `exefs`, and `romfs` paths.
+### Settings
 
-## Configuration
+Edit the installed `contents/0100000000010000/romfs/OCoop/settings.ini` with Ryujinx closed. Settings reload when a new `StageScene` initializes.
 
-The installed configuration is:
+| Key / prefix | Purpose |
+| :-- | :-- |
+| `camera.zoom.*` | Base/max zoom, separation thresholds and smoothing |
+| `player.p2.body` / `player.p2.cap` | P2's game-provided costume and cap model names |
+| `respawn.delay_seconds` | Recovery delay |
+| `bubble.*` | Distance, hold time, cooldown and water-recovery behavior |
+| `competition.coin.*` / `competition.moon.*` | Optional scoreboards; disabled by default |
 
-```text
-contents/0100000000010000/romfs/OCoop/settings.ini
-```
+**Experimental branch only:** PR #1 introduces `player.p2.spawn_offset` (default `0`, meaning no change to upstream behavior). It is **not** in `main` or the upstream release.
 
-Close Ryujinx before editing it. Settings are reloaded when a new `StageScene` initializes.
+### Troubleshooting
 
-- `camera.zoom.*` controls shared-camera zoom, separation thresholds, and smoothing.
-- `player.p2.body` and `player.p2.cap` select game-provided costume archive names.
-- `respawn.delay_seconds` controls the delayed recovery interval.
-- `bubble.*` controls recovery distance, hold time, and cooldown.
-- `competition.coin.enabled` and `competition.moon.enabled` turn the bundled scoreboard modes on independently. Their target values and screen offset are configurable through the adjacent `competition.*` settings.
+- **P2 not appearing:** verify game version 1.0.0, controller assignment, and the pause-menu `Two Players` controller prompt.
+- **Controllers controlling the wrong actor:** switch to `One Player`, let the stage rebuild, and try `Two Players` again. Restart the game if needed.
+- **Stage crashes or hangs:** reinstall one matching package, disable unrelated mods, and temporarily disable competition modes. Check [known issues](KNOWN_ISSUES.md) before reporting.
+- **Reporting:** include game/mod/emulator versions, kingdom, expected versus actual behavior, reproduction steps and redacted `[OCoop]` log lines. Do not share game files, keys, personal paths or sensitive save data.
 
-## Troubleshooting
-
-### P2 does not appear
-
-- Confirm the game reports version 1.0.0.
-- Configure both controllers in Ryujinx, then select `Two Players` from the pause menu.
-- Complete the controller prompt; P2 appears after the stage rebuild.
-- Temporarily disable other executable or gameplay mods to rule out a conflict.
-- Leave and re-enter the stage after changing controller or configuration settings.
-
-### A stage crashes while loading
-
-- Reinstall the release package so `OCoopScoreBoard.szs` and `subsdk9` come from the same release.
-- Temporarily disable both competition settings to determine whether the optional scoreboard path is involved.
-- Test with other mods disabled.
-- Include the Ryujinx log and exact reproduction steps in a bug report. Search the log for `[OCoop]` lines, but remove personal paths or unrelated data before posting it.
-
-### Controllers affect the wrong actor
-
-Select `One Player`, wait for the stage to rebuild, then select `Two Players` again. If routing remains incorrect, restart Odyssey and temporarily disable other executable or controller-related mods.
-
-See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) before reporting a new problem.
-
-## How it works
-
-The mod is an [ExLaunch](https://github.com/shadowninja108/exlaunch) `subsdk9` module for the 1.0.0 executable. Odyssey's pause-menu player-mode actions select a private full-player co-op mode and rebuild the current stage at a native scene boundary. During two-player stage initialization, the mod captures the live construction information Odyssey uses for P1, creates a second native player actor while that information is valid, assigns the second controller port, and registers the actor with the stage's existing player holder.
-
-The guiding approach is to reuse Odyssey's native actors, state machines, layouts, and transitions wherever possible. Most incompatibilities come from otherwise-correct game systems asking for player index zero. The mod changes those assumptions only inside the narrow operation that needs two-player context, leaving the surrounding game behavior native.
-
-### Player construction
-
-Odyssey builds P1 from short-lived initialization structures on the stage-init stack. The mod captures those structures while they are still valid, copies P1's construction recipe, substitutes the second controller port and configured costume names, calls the native player initializer, and registers the result before the stack frame expires. P2 is consequently visible to the same stage systems that already manage P1.
-
-### Shared camera
-
-The camera solution is layered rather than replaced. One hook shifts the native follow target toward the players' midpoint while preserving Odyssey's vertical behavior. Another scales the final camera pose according to player separation, with configurable thresholds and smoothing. A third merges right-stick input at the game's shared camera-input consumer, selecting P2 only when P2 has the stronger input above the deadzone. Special cameras that do not use this player-follow path remain untouched.
-
-### Recovery bubble
-
-The recovery system deliberately turns a single-player safety mechanic into a co-op transport mechanic:
-
-1. Odyssey's existing bubble state is enabled for either full player actor when a recoverable fall occurs.
-2. For excessive separation, the mod waits for a configurable hold time and compares recent player motion. The less-active player yields and bubbles to the player who is actively advancing; the decision is symmetric rather than tied to a fixed player number.
-3. The native safety destination is retargeted every recovery frame to the partner's live position, so the bubble follows a partner who keeps moving instead of flying toward an obsolete snapshot.
-4. The destination is kept above the partner and the forced-distance path bypasses fall damage in the verified cases.
-5. When the partners are in different dimensions, a bounded landing repair validates the destination form and completes the transition after Odyssey's native fall state would otherwise wait forever for impossible ground contact.
-
-This preserves Odyssey's bubble animation and movement while supplying the missing co-op policy around who recovers, where the bubble travels, and how it safely finishes. Terrain near cliffs and a visible 2D-to-3D fall-through remain documented alpha limitations.
-
-### Player-aware game systems
-
-The remaining hooks are similarly scoped. A stage-change wrapper polls P2 through the same native area test used for P1. The tested 2D-valve path temporarily resolves its player-zero helper queries to the actor that actually touched the valve. Capture-demo state protects an already-captured bystander, while cap return derives ownership from the cap keeper before asking for a head position. P2's life display is constructed from the active scene's layout information and follows demo and scene teardown so it cannot outlive the scene that owns it.
-
-The release build contains these functional adaptations and a no-op diagnostics interface. Detailed investigative hooks, private evidence, and reverse-engineering records remain in the private development workspace and are not exported.
+</details>
 
 ## Building from source
 
-Clone the repository with its pinned ExLaunch submodule:
+Clone **this fork** with the pinned ExLaunch submodule:
 
 ```powershell
-git clone --recurse-submodules https://github.com/Gudui/OdysseyLocalCoop.git
+git clone --recurse-submodules https://github.com/The-Power-0/OdysseyLocalCoop.git
 Set-Location OdysseyLocalCoop
 ```
 
-Build with a local devkitPro installation:
+Build locally using devkitPro, or use the pinned devkitPro container:
 
 ```powershell
 .\scripts\build.ps1 -DevkitProRoot PATH_TO_DEVKITPRO
+# OR:
+.\scripts\build.ps1 -UseDocker
+
 .\scripts\package.ps1
 .\scripts\verify.ps1
 ```
 
-Or build through the pinned official devkitPro container:
+Outputs are generated under `artifacts/`. The build requires the repository's pinned ExLaunch commit; the original [build workflow](.github/workflows/build.yml) compiles, packages, verifies and uploads a **development artifact**, not a gameplay certification. Use the appropriate development branch checkout when reviewing an unmerged PR.
 
-```powershell
-.\scripts\build.ps1 -UseDocker
-```
+<details>
+<summary><strong>How the original mod works (technical overview)</strong></summary>
 
-Outputs are written below `artifacts/`. The build refuses an ExLaunch checkout that is not at the repository's pinned commit.
+The mod builds an [ExLaunch](https://github.com/shadowninja108/exlaunch) `subsdk9` module for Odyssey 1.0.0. During a stage initialization window, it copies the native P1 player-construction data while that data is valid, constructs a second player actor with a separate controller and costume, and registers that actor with the stage's native player holder.
+
+The shared camera layers midpoint targeting, distance-based zoom and right-stick arbitration over Odyssey's camera systems instead of replacing them. Bubble recovery reuses native recovery animations, monitors player separation, chooses a partner destination and retargets recovery while the partner moves. Other scoped hooks adapt doors, 2D valves, cap ownership, captures and scene-owned P2 health layouts.
+
+The main remaining challenge is that multiple native game systems assume a single player at index zero. Changes must correct those assumptions **only in their relevant context** to avoid regressing unrelated gameplay. See the original [CONTRIBUTING.md](CONTRIBUTING.md) for requirements around verified hook offsets and private reverse-engineering material.
+
+</details>
 
 ## Contributing and credits
 
-Bug reports and focused pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, especially the rules against including game files, keys, dumps, or private information.
+Start with [open issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues), read [CONTRIBUTING.md](CONTRIBUTING.md) and [PROGRESS.md](PROGRESS.md), and keep changes scoped to one behavior. Please provide sanitized reproduction steps and clearly label emulator tests, hardware tests, and unverified hypotheses.
 
-Project and third-party credits are in [CREDITS.md](CREDITS.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Source is licensed under [GPL-2.0-only](LICENSE).
+**Original author and project:** [Gudui/OdysseyLocalCoop](https://github.com/Gudui/OdysseyLocalCoop). This independent fork retains the upstream project history, [credits](CREDITS.md), [third-party notices](THIRD_PARTY_NOTICES.md), and [GPL-2.0-only license](LICENSE). The fork's additional work does not imply upstream endorsement.
 
-Super Mario Odyssey and all related game assets are copyright Nintendo. This is an unofficial fan project and is not affiliated with or endorsed by Nintendo.
+Super Mario Odyssey and its assets are copyright Nintendo. This unofficial fan project is not affiliated with or endorsed by Nintendo. Do not submit copyrighted game executables, ROM dumps, keys, firmware or private game assets.
+

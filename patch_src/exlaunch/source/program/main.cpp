@@ -3415,6 +3415,9 @@ static void HideDecorations() {
     for (const char* pane : panes) hide(layout, pane);
 }
 static void Create(void* owner, const void* initInfo) {
+    // The previous StageScene may have been destroyed without a layout end;
+    // never retain its layout pointer or scene-local markers across rebuilds.
+    DetachForSceneReset();
     if (!ocoop::config::Get().debugMenuEnabled ||
         !IsPtr8((uintptr_t)owner) || !IsPtr8((uintptr_t)initInfo))
         return;

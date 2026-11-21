@@ -1,0 +1,27 @@
+# All-in-one P0 development test build
+
+**UNRELEASED / IN-GAME UNVERIFIED.** This branch combines the code from three independent draft PRs for testing without swapping mod installs.
+
+| Source | Purpose |
+| --- | --- |
+| [PR #50](https://github.com/The-Power-0/OdysseyLocalCoop/pull/50) | Conservative recovery anchor safeguards + host tests |
+| [PR #51](https://github.com/The-Power-0/OdysseyLocalCoop/pull/51) | Non-mutating Metro/Lake transition logging |
+| [PR #54](https://github.com/The-Power-0/OdysseyLocalCoop/pull/54) | Opt-in in-game P0 Test Lab menu + local save fixtures |
+
+This is an **integration-only branch**. Do not merge it into main; review and merge individual PRs after each issue is verified. All P0 issues #2–#5 remain open.
+
+## Install/test procedure
+
+1. Back up Ryujinx save data (legally obtained Odyssey 1.0.0), disable conflicting gameplay mods and install the development artifact from this branch's successful **Build release package** GitHub Actions run.
+2. Set `debug.menu.enabled=1` in the installed `romfs/OCoop/settings.ini`. Configure two separate controllers and select the game's `Two Players` option.
+3. Use P1 `D-pad Up` to select the P0 preset and `A` twice to mark or replay in-scene safe positions. `Minus` hides or shows the lab (normal map input is reserved while the lab is enabled).
+4. Read [P0_TEST_LAB.md](P0_TEST_LAB.md), [P0_TRIAGE.md](P0_TRIAGE.md) and [P0_STORY_TRACE.md](P0_STORY_TRACE.md). For pre-boss event rollback, use the local `scripts/p0-fixtures.ps1` with the emulator **closed**, not a mod operation.
+5. Capture redacted `[OCoop]` logs, exact game/emulator/commit/controller state, and post-restart story progress in the relevant GitHub issue.
+
+## Limits
+
+The Test Lab prototype currently does **not** directly warp into Metro boss, Lake painting or Lost lava, alter boss quest state, or trigger the native dual lava death path. Scene-local markers require reaching each encounter once. Private local save fixtures can restore pre-captured story state after a restart, but may require closing Ryujinx. The menu's layout and position replay have passed compilation only, not game validation.
+
+## Why these checks matter
+
+The build, unit tests, and fixture restore tests can pass while the real boss/painting event still hangs. They validate infrastructure; only instrumented gameplay can validate an issue fix. No P0 issue should be closed based on this build alone.

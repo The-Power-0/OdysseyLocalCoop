@@ -89,6 +89,7 @@ Back up your saves before experimenting. The upstream [known issues](KNOWN_ISSUE
    Unblock-File .\install.ps1
    .\install.ps1
    ```
+   **Portable Ryujinx:** If the extracted package is in a subfolder beneath the directory containing both `Ryujinx.exe` and `portable`, the installer automatically targets `portable/mods/contents` rather than `%APPDATA%`. The explicit `-ContentsRoot` argument overrides detection.
 4. Launch the game, enter a stage, select `Two Players` from the pause menu, and follow the controller prompt. Use `One Player` there to return to solo mode.
 
 The installer verifies packaged files and backs up files it replaces at the installation paths. To install manually, preserve the title-ID/`exefs`/`romfs` folder structure under Ryujinx's per-title mod directory. Do not mix executable and HUD files from different builds.

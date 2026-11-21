@@ -46,7 +46,7 @@ function Get-SnapshotHashes {
             sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
         }
     }
-    return ,$rows
+    return $rows
 }
 
 if ($Action -eq "List") {

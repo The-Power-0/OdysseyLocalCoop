@@ -3899,8 +3899,11 @@ HOOK_DEFINE_TRAMPOLINE(Patch0047PictureReceiveMsg) {
         const unsigned long ret = Orig(self, msg, other, target);
         patch0017::sQueryIdx = prev;
 
+        // P0 #3: do not hide unrecognized painting senders. An idx=-1
+        // bind is exactly the missing-ownership evidence we need for Lake.
+        // Bound logging even if a failed bind is retried every frame.
         const char* kind = nullptr;
-        if (idx >= 0 && IsPtr8((uintptr_t)msg)) {
+        if (IsPtr8((uintptr_t)msg)) {
             auto isBindStart =
                 OcoopFn<bool (*)(const void*)>(PatchOffsets::AlIsMsgBindStart);
             auto isBindInit =
@@ -3910,10 +3913,10 @@ HOOK_DEFINE_TRAMPOLINE(Patch0047PictureReceiveMsg) {
         }
         if (kind) {
             static unsigned sLogged = 0;
-            if (sLogged < 16) {
-                sLogged++;
-                Logging.Log("[OCoop] PATCH-0047 picture %s idx=%d ret=%d self=%p",
-                            kind, idx, (int)(ret & 1), self);
+            if (sLogged < 32) {
+                ++sLogged;
+                Logging.Log("[OCoop] PATCH-0047 P0-STORY picture %s idx=%d accepted=%d other=%p self=%p count=%u",
+                            kind, idx, (int)(ret & 1), other, self, sLogged);
             }
         }
         return ret;
@@ -4994,8 +4997,18 @@ HOOK_DEFINE_TRAMPOLINE(Patch0011P2AreaChangeStage) {
         uintptr_t h = (uintptr_t)holder;
         if (!IsPtr8(h) || !IsPtr8((uintptr_t)scene))
             return ret;
-        if (*(char*)(h + 0x49) != 0)  /* change already requested this frame */
+        if (*(char*)(h + 0x49) != 0) { /* change already requested this frame */
+            // P0 #2/#3: differentiate a native stage-change request from
+            // the additional P2 area-poll path below. Existing hook only
+            // logged successful P2 requests, hiding native P1 transitions.
+            static unsigned sNativeChangesLogged = 0;
+            if (sNativeChangesLogged < 16) {
+                ++sNativeChangesLogged;
+                Logging.Log("[OCoop] PATCH-0011 P0-STORY native stage-change requested ret=%lu scene=%p count=%u",
+                            ret, scene, sNativeChangesLogged);
+            }
             return ret;
+        }
         auto getScenePlayerHolder = OcoopFn<void* (*)(const void*)>(PatchOffsets::AlGetScenePlayerHolder);
         auto getPlayerActorAt = OcoopFn<void* (*)(const void*, int)>(PatchOffsets::AlGetPlayerActorFromHolder);
         auto isInChangeStageArea = OcoopFn<bool (*)(const void*, const void*)>(PatchOffsets::RsIsInChangeStageArea);
@@ -5020,7 +5033,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0011P2AreaChangeStage) {
         static unsigned n = 0;
         if (n < 8) {
             n++;
-            Logging.Log("[OCoop] PATCH-0011 p2 area-enter -> stage change requested (p2=%p flag=%d)",
+            Logging.Log("[OCoop] PATCH-0011 P0-STORY p2 area-enter -> stage change requested (p2=%p flag=%d)",
                         p2, (int)*(char*)(h + 0x49));
         }
         return ret;

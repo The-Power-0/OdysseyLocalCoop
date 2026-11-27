@@ -6142,8 +6142,8 @@ HOOK_DEFINE_TRAMPOLINE(HideStartupControllerGuide) {
             !IsPtr8(reinterpret_cast<uintptr_t>(actor)))
             return;
 
-        // Follow the IUseLayout lookup used by setPaneLocalAlpha in this
-        // executable. Check for Main before calling the native hide utility.
+        // This is the same IUseLayout lookup used by setPaneLocalAlpha.
+        // The resulting pointer is the root Pane on which FindPaneByName runs.
         constexpr uintptr_t kLayoutInterface = 0x08;
         const auto layoutInterface = reinterpret_cast<uintptr_t>(actor) + kLayoutInterface;
         const auto interfaceTable = *reinterpret_cast<const uintptr_t*>(layoutInterface);
@@ -6157,22 +6157,20 @@ HOOK_DEFINE_TRAMPOLINE(HideStartupControllerGuide) {
         const auto inner = *reinterpret_cast<const uintptr_t*>(keeper + 0x10);
         if (!IsPtr8(inner))
             return;
-        const auto layout = *reinterpret_cast<const uintptr_t*>(inner + 0x18);
-        if (!IsPtr8(layout))
-            return;
-        const auto layoutTable = *reinterpret_cast<const uintptr_t*>(layout);
-        if (!IsPtr8(layoutTable))
-            return;
-        const auto findPane =
-            *reinterpret_cast<void* (*const*)(uintptr_t, const char*, bool)>(layoutTable + 0x60);
-        if (!findPane(layout, "Main", true)) {
-            Logging.Log("[OCoop] BootLoading Main pane unavailable");
+        const auto root = *reinterpret_cast<const uintptr_t*>(inner + 0x18);
+        constexpr uintptr_t kPaneParentOffset = 0x18;
+        if (!IsPtr8(root) || !IsPtr8(*reinterpret_cast<const uintptr_t*>(root)) ||
+            *reinterpret_cast<const uintptr_t*>(root + kPaneParentOffset) != 0) {
+            Logging.Log("[OCoop] BootLoading root pane unavailable");
             return;
         }
 
-        const auto hidePane = OcoopFn<void (*)(uintptr_t, const char*)>(PatchOffsets::LayoutHidePane);
-        hidePane(layoutInterface, "Main");
-        Logging.Log("[OCoop] BootLoading controller artwork hidden");
+        // Pane::SetVisible(false): clear only the visibility bit.
+        constexpr uintptr_t kPaneFlagsOffset = 0x58;
+        constexpr uint8_t kVisible = 0x01;
+        auto& flags = *reinterpret_cast<uint8_t*>(root + kPaneFlagsOffset);
+        flags &= static_cast<uint8_t>(~kVisible);
+        Logging.Log("[OCoop] BootLoading root pane hidden");
     }
 };
 

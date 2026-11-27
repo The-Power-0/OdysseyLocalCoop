@@ -1,4 +1,4 @@
-# Odyssey Local Co-op
+# OdysseyTogether
 
 **An independent, stability-first development fork of [Gudui's Odyssey Local Co-op](https://github.com/Gudui/OdysseyLocalCoop).** Our goal is a reliable, polished, full-player couch co-op experience for Super Mario Odyssey—starting with an end-to-end two-player story playthrough.
 
@@ -9,7 +9,7 @@
 [Development status](#development-status) · [Progress tracker](PROGRESS.md) · [Issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues) · [Roadmap](#roadmap) · [Installation](#installation) · [Building](#building-from-source)
 
 > [!IMPORTANT]
-> **This is an experimental community fork, not a new released mod.** The `main` branch currently retains upstream `v0.1.0-alpha.5` gameplay code. Work in branches and pull requests is **not** included in `main` or an official fork release. The inherited playable target remains **Super Mario Odyssey 1.0.0**, with **two full players on one shared screen**. Four-player mode, Odyssey 1.3.0, split-screen, and online play are **not supported features of this fork**.
+> **OdysseyTogether is available as a Ryujinx prerelease for Super Mario Odyssey 1.4.1.** Download the drag-and-drop ZIP from [v0.1.0-alpha.6](https://github.com/The-Power-0/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.6). This branch documents the inherited 1.0.0 development baseline.
 
 ## Development status
 
@@ -20,7 +20,7 @@
 | First fork change | **Draft / build verified, gameplay untested** | [PR #1: opt-in P2 spawn spacing](https://github.com/The-Power-0/OdysseyLocalCoop/pull/1) · [issue #46](https://github.com/The-Power-0/OdysseyLocalCoop/issues/46) |
 | Automated validation for PR #1 | **Passed** | [Host tests](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44857762871) · [build, package and verification](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44857762895) |
 | Story-wide co-op testing | **Not established for this fork** | [Kingdom test matrix #42](https://github.com/The-Power-0/OdysseyLocalCoop/issues/42) |
-| Fork releases | **None published** | Do not mistake temporary CI artifacts for tested releases |
+| Fork releases | **First Ryujinx prerelease published** | [OdysseyTogether v0.1.0-alpha.6](https://github.com/The-Power-0/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.6) |
 
 The original project's alpha is playable in tested scenarios, but has documented progression blockers and recovery bugs. A successful build or unit test **does not** establish that a gameplay fix works in Ryujinx or on physical Switch.
 
@@ -77,7 +77,7 @@ Back up your saves before experimenting. The upstream [known issues](KNOWN_ISSUE
 
 ## Installation
 
-**There is currently no published release from this fork.** For the existing upstream alpha, obtain the `OdysseyLocalCoop-v0.1.0-alpha.5.zip` and corresponding SHA-256 file from the [original author's releases](https://github.com/Gudui/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.5). These instructions apply to that **upstream** package, not the experimental PR #1 artifact.
+For **OdysseyTogether on 1.4.1**, use the [drag-and-drop prerelease ZIP and instructions](https://github.com/The-Power-0/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.6). The steps below document the inherited upstream **1.0.0** alpha and its original package.
 
 1. Use a legally obtained copy of **Super Mario Odyssey 1.0.0**, already configured in Ryujinx, with two separately configured controllers.
 2. Download the upstream ZIP and its `.sha256` file, then check the ZIP hash:

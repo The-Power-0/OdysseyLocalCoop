@@ -2904,8 +2904,16 @@ namespace patch0008 {
     static float SeparationFull() { return ocoop::config::Get().cameraSeparationFull; }
     static float Lerp() { return ocoop::config::Get().cameraLerp; }
 
-    static void ObserveHorizontalSeparation(float dx, float dz) {
-        float separation = __builtin_sqrtf(dx * dx + dz * dz);
+    static void Reset() {
+        sTargetFactor = 1.0f;
+        sAppliedFactor = 1.0f;
+        sSeparation = -1.0f;
+        sFreshPoseCalls = 0;
+    }
+
+    static void ObserveSeparation(float dx, float dy, float dz) {
+        const float vertical = dy * 0.65f;
+        const float separation = __builtin_sqrtf(dx * dx + vertical * vertical + dz * dz);
         if (!(separation >= 0.0f) || separation > 100000.0f)
             return;
 
@@ -2920,9 +2928,8 @@ namespace patch0008 {
         sSeparation = separation;
         sTargetFactor = settings.cameraBaseZoom +
                         t * (settings.cameraMaxZoom - settings.cameraBaseZoom);
-        /* A scalar snapshot only: if player-target observation stops, final
-         * pose scaling fades safely back to Odyssey's unmodified camera. */
-        sFreshPoseCalls = 180;
+        // Briefly bridge call-order gaps without carrying zoom into another shot.
+        sFreshPoseCalls = 8;
     }
 
     static void ScaleFinalPose(float* eye, const float* at, void* poser) {
@@ -2937,7 +2944,12 @@ namespace patch0008 {
         }
 
         const auto& settings = ocoop::config::Get();
-        sAppliedFactor += (sTargetFactor - sAppliedFactor) * settings.cameraLerp;
+        // Make room quickly as players separate and ease back in when they reunite.
+        const float outwardLerp = settings.cameraLerp * 2.0f;
+        const float lerp = sTargetFactor > sAppliedFactor
+                         ? (outwardLerp < 1.0f ? outwardLerp : 1.0f)
+                         : settings.cameraLerp;
+        sAppliedFactor += (sTargetFactor - sAppliedFactor) * lerp;
         if (sAppliedFactor < 1.0f)
             sAppliedFactor = 1.0f;
         else if (sAppliedFactor > settings.cameraMaxZoom)
@@ -3657,6 +3669,21 @@ static bool IsStrPtr(uintptr_t p) {
     return p > 0x10000 && p < 0x8000000000UL;
 }
 
+#if PATCH_0006_ENABLED
+namespace separationbubble {
+    struct State {
+        ocoop::recovery::SeparationGrace grace;
+        unsigned cooldown;
+        bool destinationBlocked;
+        float previousPosition[3];
+        bool hasPreviousPosition;
+        float speed;
+    };
+
+    static State sPlayers[4]{};
+}
+#endif
+
 #if PATCH_0001_ENABLED
 namespace patch0001 {
      
@@ -3680,6 +3707,13 @@ HOOK_DEFINE_INLINE(Patch0001CaptureInitInfo) {
          * settings must therefore load here; the later layout reload makes HUD
          * placement consume the same file for the new scene. */
         ocoop::config::Reload();
+#if PATCH_0008_ENABLED
+        patch0008::Reset();
+#endif
+#if PATCH_0006_ENABLED
+        for (auto& state : separationbubble::sPlayers)
+            state = {};
+#endif
 #if PATCH_0045_ENABLED
         distancebubblecamera::ResetAll();
 #endif
@@ -4324,8 +4358,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0017DokanReceiveMsg) {
  * @ 0x971fd8. self (x0) = ActorCameraTarget*, out (x1) = Vector3f* the caller
  * fills with the tracked actor's world position. Both are pointers — no float
  * regs at this boundary. After Orig, out holds the tracked player's pos; we
- * nudge its x/z to the midpoint with the partner so the follow camera centers
- * between the two players (and every downstream consumer sees the midpoint). */
+ * center the horizontal target between the players and apply a bounded
+ * vertical adjustment for players at different heights. */
 HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
     static void Callback(void* self, float* out) {
         Orig(self, out);
@@ -4357,6 +4391,15 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
         }
         if (!trackedIsPlayer || !IsPtr8((uintptr_t)partner))
             return;
+
+        const auto isActiveDemo =
+            OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsActiveDemoActor);
+        if (isActiveDemo((const void*)tracked) || isActiveDemo(partner)) {
+#if PATCH_0008_ENABLED
+            patch0008::Reset();
+#endif
+            return;
+        }
 
         const float* tp = getTrans((const void*)tracked);
         const float* pp = getTrans((const void*)partner);
@@ -4418,7 +4461,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
                             (void*)tracked, partner);
             }
 #if PATCH_0008_ENABLED
-            patch0008::ObserveHorizontalSeparation(0.0f, 0.0f);
+            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f);
 #endif
             return;
         }
@@ -4497,7 +4540,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
             out[1] = pp[1];
             out[2] = pp[2];
 #if PATCH_0008_ENABLED
-            patch0008::ObserveHorizontalSeparation(0.0f, 0.0f);
+            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f);
 #endif
             if (fallingHandoff && !loggedEarlyHandoff) {
                 loggedEarlyHandoff = true;
@@ -4586,7 +4629,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
 
         if (p2FallingExclusion || p2TerminalExclusion || p2RecoveryExclusion) {
 #if PATCH_0008_ENABLED
-            patch0008::ObserveHorizontalSeparation(0.0f, 0.0f);
+            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f);
 #endif
             if (p2FallingExclusion && !loggedP2FallExclusion) {
                 loggedP2FallExclusion = true;
@@ -4610,10 +4653,16 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
 #endif
 #endif
 
-        float dx = (pp[0] - tp[0]) * 0.5f;
-        float dz = (pp[2] - tp[2]) * 0.5f;
-        out[0] += dx;   // x toward midpoint
-        out[2] += dz;   // z toward midpoint (y left as Orig set it)
+        const float dx = (pp[0] - tp[0]) * 0.5f;
+        const float dz = (pp[2] - tp[2]) * 0.5f;
+        float heightOffset = (pp[1] - tp[1]) * 0.25f;
+        if (heightOffset < -300.0f)
+            heightOffset = -300.0f;
+        else if (heightOffset > 300.0f)
+            heightOffset = 300.0f;
+        out[0] += dx;
+        out[1] += heightOffset;
+        out[2] += dz;
 #if OCOOP_DEV_DIAGNOSTICS
 #include "program/diagnostics_private/fragment_067.inc"
 #include "program/diagnostics_private/fragment_069.inc"
@@ -4624,7 +4673,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
 #if PATCH_0008_ENABLED
         /* Feed only scalar, current-frame separation to the final-pose hook.
          * No actor pointer survives this callback. */
-        patch0008::ObserveHorizontalSeparation(pp[0] - tp[0], pp[2] - tp[2]);
+        patch0008::ObserveSeparation(pp[0] - tp[0], pp[1] - tp[1], pp[2] - tp[2]);
 #endif
 
         static unsigned calls = 0;
@@ -4827,19 +4876,12 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             }
         }
 
-        static unsigned sHold[4] = {0, 0, 0, 0};
-        static unsigned sCooldown[4] = {0, 0, 0, 0};
-#if PATCH_0043_ENABLED
-        static bool sDestinationBlocked[4] = {false, false, false, false};
-#endif
-        /* v2 movement tracking: position VALUES (not pointers) cached per
-         * holder index; EMA of per-frame speed, ~1.2 s half-life. */
-        static float sPrev[4][3];
-        static bool sPrevValid[4] = {false, false, false, false};
-        static float sSpeedEma[4] = {0, 0, 0, 0};
         if (selfIdx < 0 || selfIdx >= 4 || partnerIdx < 0 || partnerIdx >= 4 ||
             !IsPtr8((uintptr_t)partner))
             return;
+
+        auto& state = separationbubble::sPlayers[selfIdx];
+        const auto& partnerState = separationbubble::sPlayers[partnerIdx];
 
 #if OCOOP_DEV_DIAGNOSTICS
 #include "program/diagnostics_private/fragment_037.inc"
@@ -4848,8 +4890,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
         const auto& settings = ocoop::config::Get();
         const unsigned holdFrames = ocoop::config::BubbleHoldFrames();
         const unsigned cooldownFrames = ocoop::config::BubbleCooldownFrames();
-        if (sCooldown[selfIdx] > 0)
-            sCooldown[selfIdx]--;
+        if (state.cooldown > 0)
+            state.cooldown--;
 
         uintptr_t hackKeeper = *(uintptr_t*)(player + 0x208);
         uintptr_t partnerHackKeeper = *(uintptr_t*)((uintptr_t)partner + 0x208);
@@ -4860,16 +4902,21 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
 #include "program/diagnostics_private/fragment_038.inc"
 #endif
 
-        /* Guards mirroring the native checkDeathArea preconditions: neither
-         * player dead or already in the Abyss state. */
-        if (isDeadStatus((const void*)player) || isDeadStatus(partner) ||
+        // Leave scripted demos in control and avoid starting a second recovery
+        // when either player is dead or already in the native Abyss state.
+        const auto isActiveDemo =
+            OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsActiveDemoActor);
+        if (isActiveDemo(self) || isActiveDemo(partner) ||
+            isDeadStatus(self) || isDeadStatus(partner) ||
             isNerve((const void*)player, nrvAbyss) || isNerve(partner, nrvAbyss)) {
-            sHold[selfIdx] = 0;
+            state.grace.frames = 0;
+            state.hasPreviousPosition = false;
+            state.speed = 0.0f;
 #if PATCH_0045_ENABLED
             distancebubblecamera::CancelCapturePending(selfIdx);
 #endif
 #if PATCH_0043_ENABLED
-            sDestinationBlocked[selfIdx] = false;
+            state.destinationBlocked = false;
 #endif
             return;
         }
@@ -4878,23 +4925,25 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
 
         const float* sp = getTrans((const void*)player);
         const float* pp = getTrans(partner);
-        if (sp == nullptr || pp == nullptr)
+        if (sp == nullptr || pp == nullptr) {
+            state.grace.frames = 0;
             return;
+        }
 
         /* Update own speed EMA every frame (units/frame; running ~10-25).
          * Skip teleport artifacts (bubble placement, scene warp). */
-        if (sPrevValid[selfIdx]) {
-            float mx = sp[0] - sPrev[selfIdx][0];
-            float my = sp[1] - sPrev[selfIdx][1];
-            float mz = sp[2] - sPrev[selfIdx][2];
+        if (state.hasPreviousPosition) {
+            float mx = sp[0] - state.previousPosition[0];
+            float my = sp[1] - state.previousPosition[1];
+            float mz = sp[2] - state.previousPosition[2];
             float step = __builtin_sqrtf(mx * mx + my * my + mz * mz);
             if (step < 500.0f)
-                sSpeedEma[selfIdx] += (step - sSpeedEma[selfIdx]) * 0.01f;
+                state.speed += (step - state.speed) * 0.01f;
         }
-        sPrev[selfIdx][0] = sp[0];
-        sPrev[selfIdx][1] = sp[1];
-        sPrev[selfIdx][2] = sp[2];
-        sPrevValid[selfIdx] = true;
+        state.previousPosition[0] = sp[0];
+        state.previousPosition[1] = sp[1];
+        state.previousPosition[2] = sp[2];
+        state.hasPreviousPosition = true;
 
         float dx = sp[0] - pp[0], dy = sp[1] - pp[1], dz = sp[2] - pp[2];
         float dist2 = dx * dx + dy * dy + dz * dz;
@@ -4909,18 +4958,18 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             if (apart && (calls++ % 120) == 0 && logged < 60) {
                 logged++;
                 Logging.Log("[OCoop] PATCH-0006 status dist=%.0f hold=%u cooldown=%u emaSelf=%.1f emaPartner=%.1f",
-                            __builtin_sqrtf(dist2), sHold[selfIdx], sCooldown[selfIdx],
-                            sSpeedEma[selfIdx], sSpeedEma[partnerIdx]);
+                            __builtin_sqrtf(dist2), state.grace.frames, state.cooldown,
+                            state.speed, partnerState.speed);
             }
         }
 
         if (!apart) {
-            sHold[selfIdx] = 0;
+            state.grace.frames = 0;
 #if PATCH_0045_ENABLED
             distancebubblecamera::CancelCapturePending(selfIdx);
 #endif
 #if PATCH_0043_ENABLED
-            sDestinationBlocked[selfIdx] = false;
+            state.destinationBlocked = false;
 #endif
             return;
         }
@@ -4928,15 +4977,17 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
          * less than half the partner's). Ambiguous -> P2 fires (v1 fallback).
          * The two branches are mutually exclusive, so exactly one player can
          * fire per episode. */
-        bool selfClearlyIdle = sSpeedEma[selfIdx] * 2.0f < sSpeedEma[partnerIdx];
-        bool partnerClearlyIdle = sSpeedEma[partnerIdx] * 2.0f < sSpeedEma[selfIdx];
+        bool selfClearlyIdle = state.speed * 2.0f < partnerState.speed;
+        bool partnerClearlyIdle = partnerState.speed * 2.0f < state.speed;
         bool iAmTheBubbler = (selfIdx == 0) ? selfClearlyIdle : !partnerClearlyIdle;
-        if (!iAmTheBubbler || sCooldown[selfIdx] > 0) {
+        const bool eligible = iAmTheBubbler && state.cooldown == 0;
+        const bool graceElapsed = state.grace.Tick(eligible, holdFrames);
+        if (!eligible) {
 #if PATCH_0045_ENABLED
             distancebubblecamera::CancelCapturePending(selfIdx);
 #endif
 #if PATCH_0043_ENABLED
-            sDestinationBlocked[selfIdx] = false;
+            state.destinationBlocked = false;
 #endif
             return;
         }
@@ -4945,7 +4996,6 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             bubblesafety::Evaluate(partner);
         if (!destination.IsSafe() ||
             patch0009::IsTerminalPartner(partner)) {
-            sHold[selfIdx] = 0;
 #if PATCH_0045_ENABLED
             /* The confirmed disturbing shift begins during rocket exit, before
              * FIRE. Start priority only from the unambiguous capture signal and
@@ -4953,8 +5003,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             if (destination.captured)
                 distancebubblecamera::BeginCapturePending(selfIdx);
 #endif
-            if (!sDestinationBlocked[selfIdx]) {
-                sDestinationBlocked[selfIdx] = true;
+            if (!state.destinationBlocked) {
+                state.destinationBlocked = true;
                 Logging.Log("[OCoop] PATCH-0043 trigger HELD idx=%d partner=%p ground=%d water=%d capture=%d keeper=%d collider=%d",
                             selfIdx, partner, destination.grounded ? 1 : 0,
                             destination.inWater ? 1 : 0,
@@ -4964,15 +5014,15 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             }
             return;
         }
-        if (sDestinationBlocked[selfIdx]) {
-            sDestinationBlocked[selfIdx] = false;
-            Logging.Log("[OCoop] PATCH-0043 trigger gate OPEN idx=%d partner=%p",
-                        selfIdx, partner);
+        if (state.destinationBlocked) {
+            state.destinationBlocked = false;
+            Logging.Log("[OCoop] PATCH-0043 trigger gate OPEN idx=%d partner=%p grace=%u/%u",
+                        selfIdx, partner, state.grace.frames, holdFrames);
         }
 #endif
-        if (++sHold[selfIdx] < holdFrames)
+        if (!graceElapsed)
             return;
-        sHold[selfIdx] = 0;
+        state.grace.frames = 0;
 
          
         if (selfHack != 0) {
@@ -4984,7 +5034,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             bool ok = IsPtr8(hackKeeper) ? cancelHackArea((void*)hackKeeper) : false;
             Logging.Log("[OCoop] PATCH-0006 v3 unhack-for-bubble idx=%d dist=%.0f ok=%d",
                         selfIdx, __builtin_sqrtf(dist2), ok ? 1 : 0);
-            sCooldown[selfIdx] = ok ? 120 : cooldownFrames;
+            state.cooldown = ok ? 120 : cooldownFrames;
             return;
         }
 
@@ -4997,7 +5047,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             distancebubblecamera::CancelCapturePending(selfIdx);
 #endif
             Logging.Log("[OCoop] PATCH-0006 skip: recovery not valid (recovery=%p)", (void*)recovery);
-            sCooldown[selfIdx] = cooldownFrames;
+            state.cooldown = cooldownFrames;
             return;
         }
 
@@ -5014,21 +5064,22 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             Logging.Log("[OCoop] PATCH-0006 skip: bad player fields cap=%p bind=%p carry=%p equip=%p abyss=%p",
                         (void*)hackCap, (void*)bindKeeper, (void*)carryKeeper,
                         (void*)equipUser, (void*)stateAbyss);
-            sCooldown[selfIdx] = cooldownFrames;
+            state.cooldown = cooldownFrames;
             return;
         }
 
         auto forceRecovery = OcoopFn<void (*)(void*, void*, void*, void*, void*, void*)>(
             PatchOffsets::PlayerForceRecoveryHelper);
         Logging.Log("[OCoop] PATCH-0006 FIRE idx=%d dist=%.0f emaSelf=%.1f emaPartner=%.1f player=%p partner=%p",
-                    selfIdx, __builtin_sqrtf(dist2), sSpeedEma[selfIdx], sSpeedEma[partnerIdx],
+                    selfIdx, __builtin_sqrtf(dist2), state.speed, partnerState.speed,
                     (void*)player, partner);
 #if PATCH_0045_ENABLED
         distancebubblecamera::Arm(selfIdx);
 #endif
         forceRecovery((void*)player, (void*)hackCap, (void*)carryKeeper,
                       (void*)bindKeeper, (void*)equipUser, (void*)stateAbyss);
-        sCooldown[selfIdx] = cooldownFrames;
+        state.cooldown = cooldownFrames;
+        separationbubble::sPlayers[partnerIdx].grace.frames = 0;
     }
 };
 #endif

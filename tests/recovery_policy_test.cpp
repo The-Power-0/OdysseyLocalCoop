@@ -2,6 +2,7 @@
 #include <cassert>
 using ocoop::recovery::AnchorState;
 using ocoop::recovery::CanAnchor;
+using ocoop::recovery::SeparationGrace;
 
 int main() {
     AnchorState safe{true,false,false,false,true,true,true,false,false};
@@ -24,6 +25,23 @@ int main() {
     const AnchorState bothDownB{true,true,false,true,true,true,false,false,false};
     assert(!CanAnchor(bothDownA));                // no reciprocal airborne target
     assert(!CanAnchor(bothDownB));
+
+    // A brief jump by the anchor must not make the trailing player wait twice.
+    SeparationGrace grace;
+    auto airborne = safe;
+    airborne.grounded = false;
+    assert(!grace.Tick(true, 3));
+    assert(!grace.Tick(true, 3));
+    assert(grace.Tick(true, 3) && !CanAnchor(airborne));
+    assert(grace.Tick(true, 3) && CanAnchor(safe));
+    assert(grace.frames == 3);
+
+    // Rejoining, a scripted demo, or a change of candidate discards the wait.
+    assert(!grace.Tick(false, 3));
+    assert(grace.frames == 0);
+    assert(!grace.Tick(true, 3));
+    assert(grace.Tick(true, 0));
+    assert(!grace.Tick(false, 0));
 
     return 0;
 }

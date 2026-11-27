@@ -23,4 +23,20 @@ inline bool CanAnchor(const AnchorState& state) {
            (state.grounded || (state.waterAllowed && state.inWater));
 }
 
+// Accrue sustained separation independently of the destination gate. A
+// temporarily airborne teammate may delay recovery but cannot restart the wait.
+struct SeparationGrace {
+    unsigned frames = 0;
+
+    bool Tick(bool eligible, unsigned requiredFrames) {
+        if (!eligible) {
+            frames = 0;
+            return false;
+        }
+        if (frames < requiredFrames)
+            ++frames;
+        return frames >= requiredFrames;
+    }
+};
+
 }  // namespace ocoop::recovery

@@ -14,10 +14,10 @@ constexpr size_t kConfigMaxBytes = 4096;
 constexpr unsigned kGameTicksPerSecond = 60;
 
 Settings sSettings = {
-    1.12f, 1.65f, 500.0f, 2500.0f, 0.05f,
+    1.12f, 1.85f, 350.0f, 2100.0f, 0.05f,
     "MarioColorLuigi", "MarioColorLuigi",
     10.0f,
-    3000.0f, 1.5f, 10.0f, true,
+    3000.0f, 1.1f, 5.0f, true,
     false, // developer P0 Test Lab off by default
     true, 10, -560.0f, 260.0f, -64.0f,
     true, 3, 0.0f, 0.0f,
@@ -25,10 +25,10 @@ Settings sSettings = {
 
 Settings Defaults() {
     return Settings{
-        1.12f, 1.65f, 500.0f, 2500.0f, 0.05f,
+        1.12f, 1.85f, 350.0f, 2100.0f, 0.05f,
         "MarioColorLuigi", "MarioColorLuigi",
         10.0f,
-        3000.0f, 1.5f, 10.0f, true,
+        3000.0f, 1.1f, 5.0f, true,
     false, // developer P0 Test Lab off by default
         true, 10, -560.0f, 260.0f, -64.0f,
         true, 3, 0.0f, 0.0f,

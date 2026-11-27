@@ -2,6 +2,7 @@
 #include "lib/patch/patcher_impl.hpp"
 
 #include "program/config.hpp"
+#include "program/camera_visibility.hpp"
 #include "program/p0_test_lab.hpp"
 #include "program/recovery_policy.hpp"
 #include "program/diagnostics.hpp"
@@ -2897,6 +2898,9 @@ namespace patch0008 {
     static float sAppliedFactor = 1.0f;
     static float sSeparation = -1.0f;
     static unsigned sFreshPoseCalls = 0;
+    static bool sSharedTarget = false;
+    static ocoop::camera::View sView;
+    static unsigned sViewTicks = 0;
 
     static float BaseZoom() { return ocoop::config::Get().cameraBaseZoom; }
     static float MaxZoom() { return ocoop::config::Get().cameraMaxZoom; }
@@ -2909,9 +2913,11 @@ namespace patch0008 {
         sAppliedFactor = 1.0f;
         sSeparation = -1.0f;
         sFreshPoseCalls = 0;
+        sSharedTarget = false;
+        sViewTicks = 0;
     }
 
-    static void ObserveSeparation(float dx, float dy, float dz) {
+    static void ObserveSeparation(float dx, float dy, float dz, bool sharedTarget = true) {
         const float vertical = dy * 0.65f;
         const float separation = __builtin_sqrtf(dx * dx + vertical * vertical + dz * dz);
         if (!(separation >= 0.0f) || separation > 100000.0f)
@@ -2930,6 +2936,23 @@ namespace patch0008 {
                         t * (settings.cameraMaxZoom - settings.cameraBaseZoom);
         // Briefly bridge call-order gaps without carrying zoom into another shot.
         sFreshPoseCalls = 8;
+        sSharedTarget = sharedTarget;
+        if (!sharedTarget)
+            sViewTicks = 0;
+    }
+
+    static void CaptureView(const float* eye, const float* at, const float* up, const void* poser) {
+        if (!sSharedTarget || !sFreshPoseCalls) {
+            sViewTicks = 0;
+            return;
+        }
+
+        const auto fovy = OcoopFn<float (*)(const void*)>(PatchOffsets::CameraPoserGetFovyDegree);
+        const bool valid = sView.Set({eye[0], eye[1], eye[2]}, {at[0], at[1], at[2]},
+                                     {up[0], up[1], up[2]}, fovy(poser));
+        // Both player hooks can evaluate the same sample, with a short allowance
+        // for camera/actor update order. An inactive poser quickly loses authority.
+        sViewTicks = valid ? 4 : 0;
     }
 
     static void ScaleFinalPose(float* eye, const float* at, void* poser) {
@@ -3673,6 +3696,7 @@ static bool IsStrPtr(uintptr_t p) {
 namespace separationbubble {
     struct State {
         ocoop::recovery::SeparationGrace grace;
+        ocoop::recovery::SeparationGrace outsideGrace;
         unsigned cooldown;
         bool destinationBlocked;
         float previousPosition[3];
@@ -4461,7 +4485,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
                             (void*)tracked, partner);
             }
 #if PATCH_0008_ENABLED
-            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f);
+            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f, false);
 #endif
             return;
         }
@@ -4540,7 +4564,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
             out[1] = pp[1];
             out[2] = pp[2];
 #if PATCH_0008_ENABLED
-            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f);
+            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f, false);
 #endif
             if (fallingHandoff && !loggedEarlyHandoff) {
                 loggedEarlyHandoff = true;
@@ -4629,7 +4653,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
 
         if (p2FallingExclusion || p2TerminalExclusion || p2RecoveryExclusion) {
 #if PATCH_0008_ENABLED
-            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f);
+            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f, false);
 #endif
             if (p2FallingExclusion && !loggedP2FallExclusion) {
                 loggedP2FallExclusion = true;
@@ -4772,6 +4796,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0008CoopCameraFinalZoom) {
         const float diagNativeEye[3] = {eye[0], eye[1], eye[2]};
 #endif
         patch0008::ScaleFinalPose(eye, at, self);
+        patch0008::CaptureView(eye, at, reinterpret_cast<const float*>(out + 0x50), self);
 #if OCOOP_DEV_DIAGNOSTICS
 #include "program/diagnostics_private/fragment_075.inc"
 #endif
@@ -4881,7 +4906,12 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             return;
 
         auto& state = separationbubble::sPlayers[selfIdx];
-        const auto& partnerState = separationbubble::sPlayers[partnerIdx];
+        auto& partnerState = separationbubble::sPlayers[partnerIdx];
+#if PATCH_0008_ENABLED
+        const bool viewFresh = patch0008::sViewTicks > 0;
+        if (viewFresh)
+            --patch0008::sViewTicks;
+#endif
 
 #if OCOOP_DEV_DIAGNOSTICS
 #include "program/diagnostics_private/fragment_037.inc"
@@ -4910,6 +4940,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             isDeadStatus(self) || isDeadStatus(partner) ||
             isNerve((const void*)player, nrvAbyss) || isNerve(partner, nrvAbyss)) {
             state.grace.frames = 0;
+            state.outsideGrace.frames = 0;
             state.hasPreviousPosition = false;
             state.speed = 0.0f;
 #if PATCH_0045_ENABLED
@@ -4927,6 +4958,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
         const float* pp = getTrans(partner);
         if (sp == nullptr || pp == nullptr) {
             state.grace.frames = 0;
+            state.outsideGrace.frames = 0;
             return;
         }
 
@@ -4963,25 +4995,32 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             }
         }
 
-        if (!apart) {
-            state.grace.frames = 0;
-#if PATCH_0045_ENABLED
-            distancebubblecamera::CancelCapturePending(selfIdx);
-#endif
-#if PATCH_0043_ENABLED
-            state.destinationBlocked = false;
-#endif
-            return;
+        // The earlier recovery path only runs when the shared follow camera
+        // clearly sees one player and the other is entirely outside its bounds.
+        bool selfOutside = false;
+        bool partnerOutside = false;
+#if PATCH_0008_ENABLED
+        const float minScreenDistance = settings.bubbleDistance * 0.45f;
+        if (viewFresh && dist2 > minScreenDistance * minScreenDistance &&
+            selfHack == 0 && partnerHack == 0) {
+            using ocoop::camera::Visibility;
+            const auto selfView = patch0008::sView.Classify({sp[0], sp[1], sp[2]});
+            const auto partnerView = patch0008::sView.Classify({pp[0], pp[1], pp[2]});
+            selfOutside = selfView == Visibility::Outside && partnerView == Visibility::Inside;
+            partnerOutside = partnerView == Visibility::Outside && selfView == Visibility::Inside;
         }
-        /* v2 symmetric selector: the clearly-IDLE player bubbles (speed EMA
-         * less than half the partner's). Ambiguous -> P2 fires (v1 fallback).
-         * The two branches are mutually exclusive, so exactly one player can
-         * fire per episode. */
-        bool selfClearlyIdle = state.speed * 2.0f < partnerState.speed;
-        bool partnerClearlyIdle = partnerState.speed * 2.0f < state.speed;
-        bool iAmTheBubbler = (selfIdx == 0) ? selfClearlyIdle : !partnerClearlyIdle;
-        const bool eligible = iAmTheBubbler && state.cooldown == 0;
-        const bool graceElapsed = state.grace.Tick(eligible, holdFrames);
+#endif
+        const bool selfIdle = state.speed * 2.0f < partnerState.speed;
+        const bool partnerIdle = partnerState.speed * 2.0f < state.speed;
+        const bool electedByDistance = selfIdx == 0 ? selfIdle : !partnerIdle;
+        // When the camera identifies the lagging player, don't bubble the
+        // visible teammate just because their movement happens to be slower.
+        const bool distanceEligible = apart && (selfOutside || (!partnerOutside && electedByDistance));
+        const bool ready = state.cooldown == 0;
+        constexpr unsigned outsideGraceFrames = 27; // 450 ms at Odyssey's 60 Hz.
+        const bool distanceElapsed = state.grace.Tick(ready && distanceEligible, holdFrames);
+        const bool outsideElapsed = state.outsideGrace.Tick(ready && selfOutside, outsideGraceFrames);
+        const bool eligible = ready && (distanceEligible || selfOutside);
         if (!eligible) {
 #if PATCH_0045_ENABLED
             distancebubblecamera::CancelCapturePending(selfIdx);
@@ -5020,9 +5059,10 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
                         selfIdx, partner, state.grace.frames, holdFrames);
         }
 #endif
-        if (!graceElapsed)
+        if (!distanceElapsed && !outsideElapsed)
             return;
         state.grace.frames = 0;
+        state.outsideGrace.frames = 0;
 
          
         if (selfHack != 0) {
@@ -5070,8 +5110,9 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
 
         auto forceRecovery = OcoopFn<void (*)(void*, void*, void*, void*, void*, void*)>(
             PatchOffsets::PlayerForceRecoveryHelper);
-        Logging.Log("[OCoop] PATCH-0006 FIRE idx=%d dist=%.0f emaSelf=%.1f emaPartner=%.1f player=%p partner=%p",
-                    selfIdx, __builtin_sqrtf(dist2), state.speed, partnerState.speed,
+        Logging.Log("[OCoop] PATCH-0006 FIRE idx=%d reason=%s dist=%.0f emaSelf=%.1f emaPartner=%.1f player=%p partner=%p",
+                    selfIdx, outsideElapsed ? "outside-frame" : "distance",
+                    __builtin_sqrtf(dist2), state.speed, partnerState.speed,
                     (void*)player, partner);
 #if PATCH_0045_ENABLED
         distancebubblecamera::Arm(selfIdx);
@@ -5079,7 +5120,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
         forceRecovery((void*)player, (void*)hackCap, (void*)carryKeeper,
                       (void*)bindKeeper, (void*)equipUser, (void*)stateAbyss);
         state.cooldown = cooldownFrames;
-        separationbubble::sPlayers[partnerIdx].grace.frames = 0;
+        partnerState.grace.frames = 0;
+        partnerState.outsideGrace.frames = 0;
     }
 };
 #endif

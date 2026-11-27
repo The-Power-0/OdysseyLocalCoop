@@ -1,4 +1,5 @@
 #include "program/recovery_policy.hpp"
+#include "program/camera_visibility.hpp"
 #include <cassert>
 using ocoop::recovery::AnchorState;
 using ocoop::recovery::CanAnchor;
@@ -42,6 +43,25 @@ int main() {
     assert(!grace.Tick(true, 3));
     assert(grace.Tick(true, 0));
     assert(!grace.Tick(false, 0));
+
+    using ocoop::camera::View;
+    using ocoop::camera::Visibility;
+    View view;
+    assert(view.Classify({0, 0, 1000}) == Visibility::Uncertain);
+    assert(view.Set({0, 0, 0}, {0, 0, 1}, {0, 1, 0}, 60));
+    assert(view.Classify({0, 0, 1000}) == Visibility::Inside);
+    assert(view.Classify({1500, 0, 1000}) == Visibility::Outside);
+    assert(view.Classify({-1500, 0, 1000}) == Visibility::Outside);
+    assert(view.Classify({0, 900, 1000}) == Visibility::Outside);
+    assert(view.Classify({1025, 0, 1000}) == Visibility::Uncertain);
+    assert(view.Classify({0, 0, -1000}) == Visibility::Uncertain);
+
+    // A rolled camera exchanges which world axis hits the shorter edge.
+    assert(view.Set({0, 0, 0}, {0, 0, 1}, {1, 0, 0}, 60));
+    assert(view.Classify({800, 0, 1000}) == Visibility::Outside);
+    assert(view.Classify({0, 800, 1000}) == Visibility::Inside);
+    assert(!view.Set({0, 0, 0}, {0, 0, 1}, {0, 0, 1}, 60));
+    assert(view.Classify({0, 0, 1000}) == Visibility::Uncertain);
 
     return 0;
 }

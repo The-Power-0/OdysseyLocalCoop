@@ -89,6 +89,9 @@ foreach ($record in @($manifest.files)) {
 }
 
 Write-Host "Odyssey Local Co-op $($manifest.version) installed for $Target."
+if ($manifest.PSObject.Properties["game_version"]) {
+    Write-Host "Target Super Mario Odyssey version: $($manifest.game_version)"
+}
 Write-Host "Destination: $TitleRoot"
 if ($backupCount -gt 0) { Write-Host "Backed up $backupCount replaced file(s) under: $backupRoot" }
 if ($Target -eq "Atmosphere") { Write-Warning "Physical Switch/Atmosphere support is experimental." }

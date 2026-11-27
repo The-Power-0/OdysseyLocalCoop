@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <new>
 
 /*
@@ -6132,6 +6133,49 @@ HOOK_DEFINE_TRAMPOLINE(Patch0052SequenceKillSceneForRestart) {
 #endif
 
 #if OCOOP_GAME == 130
+// Only the BootLoading layout owns the startup controller artwork. Leave the
+// layout alive so its native animation, loading and title-menu signals run.
+HOOK_DEFINE_TRAMPOLINE(HideStartupControllerGuide) {
+    static void Callback(void* actor, const void* init, const char* archive, const char* suffix) {
+        Orig(actor, init, archive, suffix);
+        if (!archive || std::strcmp(archive, "BootLoading") != 0 ||
+            !IsPtr8(reinterpret_cast<uintptr_t>(actor)))
+            return;
+
+        // Follow the IUseLayout lookup used by setPaneLocalAlpha in this
+        // executable. Check for Main before calling the native hide utility.
+        constexpr uintptr_t kLayoutInterface = 0x08;
+        const auto layoutInterface = reinterpret_cast<uintptr_t>(actor) + kLayoutInterface;
+        const auto interfaceTable = *reinterpret_cast<const uintptr_t*>(layoutInterface);
+        if (!IsPtr8(interfaceTable))
+            return;
+        const auto getKeeper =
+            *reinterpret_cast<uintptr_t (*const*)(uintptr_t)>(interfaceTable + 0x08);
+        const auto keeper = getKeeper(layoutInterface);
+        if (!IsPtr8(keeper))
+            return;
+        const auto inner = *reinterpret_cast<const uintptr_t*>(keeper + 0x10);
+        if (!IsPtr8(inner))
+            return;
+        const auto layout = *reinterpret_cast<const uintptr_t*>(inner + 0x18);
+        if (!IsPtr8(layout))
+            return;
+        const auto layoutTable = *reinterpret_cast<const uintptr_t*>(layout);
+        if (!IsPtr8(layoutTable))
+            return;
+        const auto findPane =
+            *reinterpret_cast<void* (*const*)(uintptr_t, const char*, bool)>(layoutTable + 0x60);
+        if (!findPane(layout, "Main", true)) {
+            Logging.Log("[OCoop] BootLoading Main pane unavailable");
+            return;
+        }
+
+        const auto hidePane = OcoopFn<void (*)(uintptr_t, const char*)>(PatchOffsets::LayoutHidePane);
+        hidePane(layoutInterface, "Main");
+        Logging.Log("[OCoop] BootLoading controller artwork hidden");
+    }
+};
+
 static bool MatchesUpdatedSwitchExecutable() {
     const auto& rodata = exl::util::GetMainModuleInfo().m_Rodata;
     // The NSO container header is not mapped. The linker build ID is also
@@ -6161,6 +6205,9 @@ extern "C" void exl_main(void* x0, void* x1) {
     exl::patch::impl::InitPatcherImpl();
     ocoop::diagnostics::Initialize();
     Logging.Log("[OCoop] init (OCoopMod, target 0100000000010000 " OCOOP_GAME_VERSION_STRING ")");
+#if OCOOP_GAME == 130
+    HideStartupControllerGuide::InstallAtOffset(PatchOffsets::LayoutActorInit);
+#endif
 
 #if OCOOP_DEV_DIAGNOSTICS
 #include "program/diagnostics_private/fragment_080.inc"

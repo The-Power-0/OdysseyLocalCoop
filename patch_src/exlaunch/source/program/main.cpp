@@ -12,6 +12,7 @@
 #include "nn/fs/fs_files.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -6133,13 +6134,18 @@ HOOK_DEFINE_TRAMPOLINE(Patch0052SequenceKillSceneForRestart) {
 #endif
 
 #if OCOOP_GAME == 130
-// Only the BootLoading layout owns the startup controller artwork. Leave the
-// layout alive so its native animation, loading and title-menu signals run.
+// Boot and TitleMenuScene each construct BootLoading. Hide the first copy
+// only, leaving the title background and both native state machines active.
 HOOK_DEFINE_TRAMPOLINE(HideStartupControllerGuide) {
     static void Callback(void* actor, const void* init, const char* archive, const char* suffix) {
         Orig(actor, init, archive, suffix);
         if (!archive || std::strcmp(archive, "BootLoading") != 0 ||
             !IsPtr8(reinterpret_cast<uintptr_t>(actor)))
+            return;
+
+        // Startup and title layout initialization can run on different threads.
+        static std::atomic<bool> bootLayoutSeen{false};
+        if (bootLayoutSeen.exchange(true, std::memory_order_relaxed))
             return;
 
         // This is the same IUseLayout lookup used by setPaneLocalAlpha.

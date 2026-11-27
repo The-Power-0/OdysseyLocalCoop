@@ -10,6 +10,7 @@
 
 #include "nn/fs/fs_files.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -6039,45 +6040,27 @@ HOOK_DEFINE_TRAMPOLINE(Patch0052SequenceKillSceneForRestart) {
 
 #if OCOOP_GAME == 130
 static bool MatchesUpdatedSwitchExecutable() {
-    const auto& module = exl::util::GetMainModuleInfo();
-    const uintptr_t base = module.m_Total.m_Start;
-    constexpr uintptr_t headPositionLoad = PatchOffsets::RsGetPlayerHeadPos + 0x28;
-    constexpr uintptr_t mapTailBegin = PatchOffsets::RsIsTriggerMapOpen + 0x44;
-    constexpr uintptr_t mapTailEnd = PatchOffsets::RsIsTriggerMapOpen + 0x54;
-
-    if (!module.m_Text.InRange(base + headPositionLoad + sizeof(uint32_t) - 1) ||
-        !module.m_Text.InRange(base + mapTailEnd + sizeof(uint32_t) - 1))
-        return false;
-
-    const auto readInstruction = [base](uintptr_t offset) {
-        return *reinterpret_cast<const uint32_t*>(base + offset);
+    const auto& rodata = exl::util::GetMainModuleInfo().m_Rodata;
+    // The NSO container header is not mapped. The linker build ID is also
+    // present after the GNU note name in the executable's read-only segment.
+    constexpr unsigned char expectedNote[] = {
+        'G', 'N', 'U', 0,
+        0xb4, 0x24, 0xbe, 0x15, 0x0a, 0x8e, 0x7d, 0x78,
+        0x70, 0x1c, 0xbe, 0x7a, 0x43, 0x9d, 0x9e, 0xbf,
     };
-    // rs::getPlayerHeadPos loads the collision arranger from PlayerInfo +0x80.
-    constexpr uint32_t loadCollisionArranger = 0xf9404000; // ldr x0, [x0, #0x80]
-    if (readInstruction(headPositionLoad) != loadCollisionArranger)
+    if (rodata.m_Start == 0 || rodata.m_Size < sizeof(expectedNote))
         return false;
 
-    // rs::isTriggerMapOpen sets w1 to true and tail-calls the dual-port helper.
-    constexpr uint32_t setSecondArgumentTrue = 0x52800021; // mov w1, #1
-    bool setsSecondArgument = false;
-    for (uintptr_t pc = mapTailBegin; pc <= mapTailEnd; pc += 4) {
-        const uint32_t instruction = readInstruction(pc);
-        if (instruction == setSecondArgumentTrue)
-            setsSecondArgument = true;
-
-        const auto distance = static_cast<uint32_t>(PatchOffsets::RsMapOpenDualPortTrigger - pc);
-        const uint32_t branch = 0x14000000 | ((distance >> 2) & 0x03ffffff);
-        if (setsSecondArgument && instruction == branch)
-            return true;
-    }
-    return false;
+    const auto* begin = reinterpret_cast<const unsigned char*>(rodata.m_Start);
+    const auto* end = begin + rodata.m_Size;
+    return std::search(begin, end, expectedNote, expectedNote + sizeof(expectedNote)) != end;
 }
 #endif
 
 extern "C" void exl_main(void* x0, void* x1) {
 #if OCOOP_GAME == 130
     if (!MatchesUpdatedSwitchExecutable()) {
-        Logging.Log("[OCoop] Unsupported main executable signature, co-op hooks skipped");
+        Logging.Log("[OCoop] Expected main build ID b424be150a8e7d78701cbe7a439d9ebf missing from read-only data, co-op hooks skipped");
         return;
     }
 #endif

@@ -14,7 +14,7 @@ This is an **integration-only branch**. Do not merge it into main; review and me
 
 The `-smo-1.4.1` artifact targets the original Switch executable in the 1.4.1 update. Use it with Odyssey showing **1.4.1** in Ryujinx. The other artifact targets 1.0.0.
 
-The updated executable shares its main build ID (`b424be150a8e7d78701cbe7a439d9ebf`, first 16 bytes) with 1.3.0 on original Switch. The port uses [Colbster937’s 1.3.0 offsets and compatibility changes](https://github.com/colbster937/OdysseyLocalCoopPlus/commit/c6bc8372e42d7d991619a1ef572b44205cb949b7). At startup it checks two instruction signatures before installing the co-op hooks. It logs a signature mismatch and skips the hooks when the checks fail.
+The updated executable shares its main build ID (`b424be150a8e7d78701cbe7a439d9ebf`, first 16 bytes) with 1.3.0 on original Switch. The port uses [Colbster937’s 1.3.0 offsets and compatibility changes](https://github.com/colbster937/OdysseyLocalCoopPlus/commit/c6bc8372e42d7d991619a1ef572b44205cb949b7). At startup it checks for that build ID in the main executable’s mapped read-only data before installing hooks. If the ID is missing, it logs the failure and skips the hooks.
 
 Build with `./scripts/build.ps1 -UseDocker -GameVersion 1.4.1`, then run `./scripts/package.ps1` and `./scripts/verify.ps1`. Use a disposable Ryujinx save for the first boot and controller check. Switch 2 and in-game behavior still require validation.
 

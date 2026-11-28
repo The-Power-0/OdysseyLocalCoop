@@ -3830,6 +3830,11 @@ static bool PrepareNativeReload(void* sequence) {
         holder = *(void**)((uintptr_t)sequence + 0xb8);
     }
     bool same = false, safe = false, idle = false, ready = false;
+    char currentStage[128] = {};
+    auto stageNameOk = [](const char* p) {
+        const auto a = reinterpret_cast<uintptr_t>(p);
+        return a > 0x10000 && a < 0x8000000000UL;
+    };
     if (IsPtr8((uintptr_t)scene) && IsPtr8((uintptr_t)holder)) {
         auto getHolder = OcoopFn<void* (*)(const void*)>(PatchOffsets::AlGetScenePlayerHolder);
         auto getPlayer = OcoopFn<void* (*)(const void*, int)>(PatchOffsets::AlGetPlayerActorFromHolder);
@@ -3841,20 +3846,28 @@ static bool PrepareNativeReload(void* sequence) {
             safe = same && SafeToMove(p1, p2);
         }
         idle = !patch0052::sKillPending && *((unsigned char*)holder + 0x49) == 0;
-        const uintptr_t file = *(const uintptr_t*)((uintptr_t)holder + PatchOffsets::GameDataHolderFile);
-        if (IsPtr8(file)) {
-            const auto a = *(const uintptr_t*)(file + PatchOffsets::GameDataFileStageNameA);
-            const auto b = *(const uintptr_t*)(file + PatchOffsets::GameDataFileStageNameB);
-            const auto c = *(const uintptr_t*)(file + PatchOffsets::GameDataFileStageNameC);
-            const auto src = *(const uintptr_t*)(file + PatchOffsets::GameDataFileRestartSource);
-            // These are the same string fields used by the audited restart helper.
-            // Reject obviously invalid storage before it touches the native state.
-            const auto strOk = [](uintptr_t p) { return p > 0x10000 && p < 0x8000000000UL; };
-            ready = *(const uintptr_t*)(file + PatchOffsets::GameDataFileHolder) == (uintptr_t)holder &&
-                *((unsigned char*)holder + PatchOffsets::GameDataHolderRestartGuard) == 0 &&
-                strOk(a) && strOk(b) && strOk(c) && strOk(src) &&
-                *reinterpret_cast<const char*>(a) != '\0';
+        // Mode switches already prove the native request path in game.
+        // The old preflight assumed restart scratch strings were populated
+        // during ordinary gameplay, before the native request prepared them.
+        // Validate the live scene's holder and current stage instead.
+        auto getSceneObj = OcoopFn<void* (*)(const void*, int)>(PatchOffsets::AlGetSceneObj);
+        void* sceneHolder = getSceneObj((const void*)((uintptr_t)scene + 0x20),
+                                        PatchOffsets::SceneObjIdGameDataHolder);
+        const char* name = *(const char* const*)((uintptr_t)sequence +
+                                      PatchOffsets::HakoniwaSequenceStageNameTop);
+        unsigned length = 0;
+        if (stageNameOk(name)) {
+            while (length + 1 < sizeof(currentStage) && name[length]) {
+                const char ch = name[length];
+                if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                      (ch >= '0' && ch <= '9') || ch == '_')) break;
+                currentStage[length++] = ch;
+            }
         }
+        ready = sceneHolder == holder && length > 0 &&
+                length + 1 < sizeof(currentStage) && name[length] == 0;
+        Logging.Log("[OCoop] P0-LAB reload preflight sceneHolder=%p seqHolder=%p stage=%s stageReady=%d",
+                    sceneHolder, holder, currentStage, (int)ready);
     }
     auto saveDone = OcoopFn<bool (*)()>(PatchOffsets::AlIsDoneSaveDataSequence);
     const ocoop::p0lab::ReloadGuards guards{
@@ -3869,13 +3882,19 @@ static bool PrepareNativeReload(void* sequence) {
             (int)guards.saveIdle,(int)guards.transitionIdle,(int)guards.restartReady);
         return false;
     }
-    patch0052::RestartStageV130(holder);
+    // Call the installed, gameplay-proven mode request hook with the
+    // existing private mode. Its native Orig(scene,false) prepares the
+    // normal stage restart; PATCH-0052 retains full 2P and sets killPending.
+    auto requestMode = OcoopFn<void (*)(void*, bool)>(PatchOffsets::RsChangeSeparatePlayMode);
+    requestMode(scene, true);
     auto getNext = OcoopFn<const char* (*)(const void*)>(PatchOffsets::GameDataHolderGetNextStageName);
     const char* next = getNext(holder);
-    if ((uintptr_t)next <= 0x10000 || (uintptr_t)next >= 0x8000000000UL || !*next) {
+    if (!patch0052::sKillPending || !stageNameOk(next) ||
+        std::strncmp(next, currentStage, sizeof(currentStage)) != 0) {
+        patch0052::sKillPending = false;
         sMessage = "NO STAGE";
         Render();
-        Logging.Log("[OCoop] P0-LAB reload: native restart did not yield a valid stage; no scene kill");
+        Logging.Log("[OCoop] P0-LAB reload: same-stage target not confirmed expected=%s next=%p; no forced scene kill", currentStage, next);
         return false;
     }
     sReloadInFlight = true;

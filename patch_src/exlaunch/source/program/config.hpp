@@ -20,6 +20,8 @@ struct Settings {
     bool bubbleWaterCountsAsGround;
 
     bool debugMenuEnabled;
+    float debugHudX;
+    float debugHudY;
 
     bool coinRaceEnabled;
     int coinRaceTarget;

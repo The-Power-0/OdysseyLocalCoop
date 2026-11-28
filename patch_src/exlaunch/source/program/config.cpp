@@ -13,27 +13,40 @@ constexpr const char* kConfigPath = "content:/OCoop/settings.ini";
 constexpr size_t kConfigMaxBytes = 4096;
 constexpr unsigned kGameTicksPerSecond = 60;
 
-Settings sSettings = {
-    1.12f, 1.85f, 350.0f, 2100.0f, 0.05f,
-    "MarioColorLuigi", "MarioColorLuigi",
-    10.0f,
-    3000.0f, 1.1f, 5.0f, true,
-        false, 560.0f, 0.0f, // developer P0 Test Lab off by default; top-center candidate
-    true, 10, -560.0f, 260.0f, -64.0f,
-    true, 3, 0.0f, 0.0f,
-};
-
+// Use a single source of defaults so new settings cannot shift one initializer.
 Settings Defaults() {
-    return Settings{
-        1.12f, 1.85f, 350.0f, 2100.0f, 0.05f,
-        "MarioColorLuigi", "MarioColorLuigi",
-        10.0f,
-        3000.0f, 1.1f, 5.0f, true,
-    false, // developer P0 Test Lab off by default
-        true, 10, -560.0f, 260.0f, -64.0f,
-        true, 3, 0.0f, 0.0f,
-    };
+    Settings settings{};
+    settings.cameraBaseZoom = 1.12f;
+    settings.cameraMaxZoom = 1.85f;
+    settings.cameraSeparationStart = 350.0f;
+    settings.cameraSeparationFull = 2100.0f;
+    settings.cameraLerp = 0.05f;
+    constexpr char costume[] = "MarioColorLuigi";
+    for (size_t i = 0; i < sizeof(costume); ++i) {
+        settings.p2Body[i] = costume[i];
+        settings.p2Cap[i] = costume[i];
+    }
+    settings.respawnDelaySeconds = 10.0f;
+    settings.bubbleDistance = 3000.0f;
+    settings.bubbleHoldSeconds = 1.1f;
+    settings.bubbleCooldownSeconds = 5.0f;
+    settings.bubbleWaterCountsAsGround = true;
+    settings.debugMenuEnabled = false;
+    settings.debugHudX = 560.0f;
+    settings.debugHudY = 0.0f;
+    settings.coinRaceEnabled = true;
+    settings.coinRaceTarget = 10;
+    settings.coinRaceHudX = -560.0f;
+    settings.coinRaceHudY = 260.0f;
+    settings.coinRaceHudSpacing = -64.0f;
+    settings.moonRaceEnabled = true;
+    settings.moonRaceTarget = 3;
+    settings.competitionHudX = 0.0f;
+    settings.competitionHudY = 0.0f;
+    return settings;
 }
+
+Settings sSettings = Defaults();
 
 float Clamp(float value, float minValue, float maxValue) {
     if (value < minValue)

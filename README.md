@@ -2,15 +2,26 @@
 
 OdysseyTogether is a shared-screen, two-player mod for [Super Mario Odyssey](https://supermario.nintendo.com/). It builds on [Gudui’s Odyssey Local Co-op](https://github.com/Gudui/OdysseyLocalCoop).
 
-## Install on Ryujinx
+## Download & install
 
-Use **Super Mario Odyssey 1.4.1** and configure two controllers. Download the [OdysseyTogether prerelease ZIP](https://github.com/The-Power-0/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.6). Right-click Odyssey in Ryujinx and choose **Open Mods Directory**. Extract the ZIP into that directory so it contains `OdysseyTogether/exefs` and `OdysseyTogether/romfs`. Then enter a stage and select **Two Players** from the pause menu.
+**Current development version: v0.1.0-alpha.7 — Super Mario Odyssey 1.4.1 on Ryujinx.** Download the newest available prerelease from [GitHub Releases](https://github.com/The-Power-0/OdysseyLocalCoop/releases).
 
-If you installed a test build, move its loose co-op `exefs` and `romfs` out of the mods directory or disable its old named entry. For the integrated development build, disable the old `OCoop Guide` entry as well. The English co-op confirmation text is built into OdysseyTogether.
+1. Configure two controllers in Ryujinx and confirm Odyssey is on **1.4.1**.
+2. Right-click the game and choose **Open Mods Directory**.
+3. Back up saves and disable/remove previous co-op mods, including the separate `OCoop Guide` entry when upgrading to alpha.7.
+4. Extract the release ZIP so the directory contains `OdysseyTogether/exefs` and `OdysseyTogether/romfs`.
+5. Enter a stage and select **Two Players** from the pause menu.
 
-The integrated development build includes the Cap Kingdom Spark Pylon fix. A P2-led crossing to Cascade succeeded in Ryujinx with Test 3. See the release notes for the published alpha.6 and the remaining playtest coverage.
+## What's new in alpha.7
 
-[Release notes](RELEASE_NOTES.md) · [Issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues) · [Test Lab](docs/P0_TEST_LAB.md)
+- Cap Kingdom Spark Pylon recovery protection: a P2-led crossing to Cascade succeeded in Ryujinx testing.
+- Integrated English **Local Co-op** confirmation: two full characters, two controllers, no separate guide patch required.
+- Improved shared camera framing and faster off-screen recovery, carried forward from alpha.6.
+- Hidden Joy-Con startup guide, independent controls and optional development Test Lab.
+
+**Alpha status:** P1-led and later pylon crossings, integrated guide display, and broader story progression still need gameplay verification. Back up saves and avoid switching player modes between defeating Topper and reaching Cascade. The Metro, Lake and Lost Kingdom blockers remain open.
+
+[Release notes](RELEASE_NOTES.md) · [Issue tracker](https://github.com/The-Power-0/OdysseyLocalCoop/issues) · [Test Lab](docs/P0_TEST_LAB.md)
 
 ## Roadmap
 
@@ -37,10 +48,11 @@ See **[PROGRESS.md](PROGRESS.md)** for the dated workstream ledger, status defin
 
 | Target | Status |
 | :-- | :-- |
-| Super Mario Odyssey **1.0.0** | Upstream alpha target and only current baseline |
-| Ryujinx | Primary upstream-tested emulator target; fork changes need separate testing |
+| Super Mario Odyssey **1.4.1** | Current OdysseyTogether prerelease target; tested on Ryujinx |
+| Super Mario Odyssey **1.0.0** | Inherited upstream baseline; not the current release target |
+| Ryujinx | Primary tested platform; full campaign verification ongoing |
 | Atmosphere / physical Switch | **Experimental upstream** (limited physical testing); no new fork hardware claims |
-| Odyssey **1.3.0** | **Not supported**; [planned investigation #36](https://github.com/The-Power-0/OdysseyLocalCoop/issues/36) |
+| Odyssey **1.3.0** | Not a supported release target; [planned investigation #36](https://github.com/The-Power-0/OdysseyLocalCoop/issues/36) |
 | 3–4 players | **Not supported**; [future investigation #34](https://github.com/The-Power-0/OdysseyLocalCoop/issues/34) |
 
 Back up your saves before experimenting. The upstream [known issues](KNOWN_ISSUES.md) include Metro Kingdom's post-boss white screen and Lake Kingdom's painting transition loop, as well as severe Lost Kingdom lava recovery cases. Avoid assuming that anything in a draft branch fixes those defects.
@@ -57,7 +69,7 @@ Set-Location OdysseyLocalCoop
 Build locally using devkitPro, or use the pinned devkitPro container:
 
 ```powershell
-.\scripts\build.ps1 -DevkitProRoot PATH_TO_DEVKITPRO
+.\scripts\build.ps1 -DevkitProRoot PATH_TO_DEVKITPRO -GameVersion 1.4.1
 # OR:
 .\scripts\build.ps1 -UseDocker -GameVersion 1.4.1
 
@@ -70,7 +82,7 @@ Outputs are generated under `artifacts/`. The build requires the repository's pi
 <details>
 <summary><strong>How the original mod works (technical overview)</strong></summary>
 
-The mod builds an [ExLaunch](https://github.com/shadowninja108/exlaunch) `subsdk9` module for Odyssey 1.0.0. During a stage initialization window, it copies the native P1 player-construction data while that data is valid, constructs a second player actor with a separate controller and costume, and registers that actor with the stage's native player holder.
+The mod builds an [ExLaunch](https://github.com/shadowninja108/exlaunch) `subsdk9` module; the current release target is Odyssey 1.4.1. During a stage initialization window, it copies the native P1 player-construction data while that data is valid, constructs a second player actor with a separate controller and costume, and registers that actor with the stage's native player holder.
 
 The shared camera layers midpoint targeting, distance-based zoom and right-stick arbitration over Odyssey's camera systems instead of replacing them. Bubble recovery reuses native recovery animations, monitors player separation, chooses a partner destination and retargets recovery while the partner moves. Other scoped hooks adapt doors, 2D valves, cap ownership, captures and scene-owned P2 health layouts.
 

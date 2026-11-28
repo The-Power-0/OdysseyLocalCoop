@@ -19,6 +19,8 @@ struct Settings {
     float bubbleCooldownSeconds;
     bool bubbleWaterCountsAsGround;
 
+    bool debugMenuEnabled;
+
     bool coinRaceEnabled;
     int coinRaceTarget;
     float coinRaceHudX;

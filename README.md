@@ -1,46 +1,16 @@
 # OdysseyTogether
 
-**An independent, stability-first development fork of [Gudui's Odyssey Local Co-op](https://github.com/Gudui/OdysseyLocalCoop).** Our goal is a reliable, polished, full-player couch co-op experience for Super Mario Odyssey—starting with an end-to-end two-player story playthrough.
+OdysseyTogether is a shared-screen, two-player mod for [Super Mario Odyssey](https://supermario.nintendo.com/). It builds on [Gudui’s Odyssey Local Co-op](https://github.com/Gudui/OdysseyLocalCoop).
 
-[![Two fully controllable Mario players in the Sand Kingdom](media/odyssey-local-coop.png)](https://vimeo.com/1211084414/41139bee79?share=copy&fl=sv&fe=ci)
+## Install on Ryujinx
 
-*Original upstream gameplay showcase. The image is not a demonstration of additional features developed by this fork.*
+Use **Super Mario Odyssey 1.4.1** and configure two controllers. Download the [OdysseyTogether prerelease ZIP](https://github.com/The-Power-0/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.6). Right-click Odyssey in Ryujinx and choose **Open Mods Directory**. Extract the ZIP into that directory so it contains `OdysseyTogether/exefs` and `OdysseyTogether/romfs`. Then enter a stage and select **Two Players** from the pause menu.
 
-[Development status](#development-status) · [Progress tracker](PROGRESS.md) · [Issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues) · [Roadmap](#roadmap) · [Installation](#installation) · [Building](#building-from-source)
+If you installed a test build, move its loose co-op `exefs` and `romfs` out of the mods directory or disable its old named entry. For the integrated development build, disable the old `OCoop Guide` entry as well. The English co-op confirmation text is built into OdysseyTogether.
 
-> [!IMPORTANT]
-> **OdysseyTogether is available as a Ryujinx prerelease for Super Mario Odyssey 1.4.1.** Download the drag-and-drop ZIP from [v0.1.0-alpha.6](https://github.com/The-Power-0/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.6). This branch documents the inherited 1.0.0 development baseline.
+The integrated development build includes the Cap Kingdom Spark Pylon fix. A P2-led crossing to Cascade succeeded in Ryujinx with Test 3. See the release notes for the published alpha.6 and the remaining playtest coverage.
 
-## Development status
-
-| Area | Current state | Evidence / next step |
-| :-- | :-- | :-- |
-| Upstream baseline | **Inherited, early alpha** | [Original project](https://github.com/Gudui/OdysseyLocalCoop) · [upstream known issues](KNOWN_ISSUES.md) |
-| Fork `main` | **Upstream gameplay baseline** | No fork-specific gameplay changes merged |
-| First fork change | **Draft / build verified, gameplay untested** | [PR #1: opt-in P2 spawn spacing](https://github.com/The-Power-0/OdysseyLocalCoop/pull/1) · [issue #46](https://github.com/The-Power-0/OdysseyLocalCoop/issues/46) |
-| Automated validation for PR #1 | **Passed** | [Host tests](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44857762871) · [build, package and verification](https://github.com/The-Power-0/OdysseyLocalCoop/actions/runs/44857762895) |
-| Story-wide co-op testing | **Not established for this fork** | [Kingdom test matrix #42](https://github.com/The-Power-0/OdysseyLocalCoop/issues/42) |
-| Fork releases | **First Ryujinx prerelease published** | [OdysseyTogether v0.1.0-alpha.6](https://github.com/The-Power-0/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.6) |
-
-The original project's alpha is playable in tested scenarios, but has documented progression blockers and recovery bugs. A successful build or unit test **does not** establish that a gameplay fix works in Ryujinx or on physical Switch.
-
-**Live tracking:** [Open issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues?q=is%3Aissue%20is%3Aopen) · [Pull requests](https://github.com/The-Power-0/OdysseyLocalCoop/pulls) · [Actions](https://github.com/The-Power-0/OdysseyLocalCoop/actions) · [Progress ledger](PROGRESS.md)
-
-## What already works in the upstream baseline
-
-This fork inherits these features from Gudui's mod; they are **not new improvements made by this fork**:
-
-- Two independent, fully controllable Mario actors using two separately configured controllers.
-- Pause-menu `Two Players` / `One Player` actions that rebuild the stage to enter or leave full-player co-op.
-- Configurable P2 costume and cap, using game-provided model names.
-- A shared camera with midpoint tracking, separation-based zoom, and right-stick input from either player.
-- Recovery bubbles for falls and excessive player separation in tested scenarios.
-- P2 support for tested stage doors, 2D sections, and other player-aware interactions.
-- Simultaneous captures and cap return ownership in tested paths.
-- Separate P2 health tracking and a scene-owned life display.
-- An optional bundled coin / Moon competition scoreboard (disabled by default because of known edge cases).
-
-This is **local shared-screen co-op**, not the game's native Mario/Cappy separate-play mode.
+[Release notes](RELEASE_NOTES.md) · [Issues](https://github.com/The-Power-0/OdysseyLocalCoop/issues) · [Test Lab](docs/P0_TEST_LAB.md)
 
 ## Roadmap
 
@@ -75,51 +45,6 @@ See **[PROGRESS.md](PROGRESS.md)** for the dated workstream ledger, status defin
 
 Back up your saves before experimenting. The upstream [known issues](KNOWN_ISSUES.md) include Metro Kingdom's post-boss white screen and Lake Kingdom's painting transition loop, as well as severe Lost Kingdom lava recovery cases. Avoid assuming that anything in a draft branch fixes those defects.
 
-## Installation
-
-For **OdysseyTogether on 1.4.1**, use the [drag-and-drop prerelease ZIP and instructions](https://github.com/The-Power-0/OdysseyLocalCoop/releases/tag/v0.1.0-alpha.6). The steps below document the inherited upstream **1.0.0** alpha and its original package.
-
-1. Use a legally obtained copy of **Super Mario Odyssey 1.0.0**, already configured in Ryujinx, with two separately configured controllers.
-2. Download the upstream ZIP and its `.sha256` file, then check the ZIP hash:
-   ```powershell
-   Get-FileHash .\OdysseyLocalCoop-v0.1.0-alpha.5.zip -Algorithm SHA256
-   ```
-3. Extract the package. Inspect `install.ps1` before running it, then from that directory:
-   ```powershell
-   Unblock-File .\install.ps1
-   .\install.ps1
-   ```
-   **Portable Ryujinx:** If the extracted package is in a subfolder beneath the directory containing both `Ryujinx.exe` and `portable`, the installer automatically targets `portable/mods/contents` rather than `%APPDATA%`. The explicit `-ContentsRoot` argument overrides detection.
-4. Launch the game, enter a stage, select `Two Players` from the pause menu, and follow the controller prompt. Use `One Player` there to return to solo mode.
-
-The installer verifies packaged files and backs up files it replaces at the installation paths. To install manually, preserve the title-ID/`exefs`/`romfs` folder structure under Ryujinx's per-title mod directory. Do not mix executable and HUD files from different builds.
-
-<details>
-<summary><strong>Configuration and troubleshooting</strong></summary>
-
-### Settings
-
-Edit the installed `contents/0100000000010000/romfs/OCoop/settings.ini` with Ryujinx closed. Settings reload when a new `StageScene` initializes.
-
-| Key / prefix | Purpose |
-| :-- | :-- |
-| `camera.zoom.*` | Base/max zoom, separation thresholds and smoothing |
-| `player.p2.body` / `player.p2.cap` | P2's game-provided costume and cap model names |
-| `respawn.delay_seconds` | Recovery delay |
-| `bubble.*` | Distance, hold time, cooldown and water-recovery behavior |
-| `competition.coin.*` / `competition.moon.*` | Optional scoreboards; disabled by default |
-
-**Experimental branch only:** PR #1 introduces `player.p2.spawn_offset` (default `0`, meaning no change to upstream behavior). It is **not** in `main` or the upstream release.
-
-### Troubleshooting
-
-- **P2 not appearing:** verify game version 1.0.0, controller assignment, and the pause-menu `Two Players` controller prompt.
-- **Controllers controlling the wrong actor:** switch to `One Player`, let the stage rebuild, and try `Two Players` again. Restart the game if needed.
-- **Stage crashes or hangs:** reinstall one matching package, disable unrelated mods, and temporarily disable competition modes. Check [known issues](KNOWN_ISSUES.md) before reporting.
-- **Reporting:** include game/mod/emulator versions, kingdom, expected versus actual behavior, reproduction steps and redacted `[OCoop]` log lines. Do not share game files, keys, personal paths or sensitive save data.
-
-</details>
-
 ## Building from source
 
 Clone **this fork** with the pinned ExLaunch submodule:
@@ -134,7 +59,7 @@ Build locally using devkitPro, or use the pinned devkitPro container:
 ```powershell
 .\scripts\build.ps1 -DevkitProRoot PATH_TO_DEVKITPRO
 # OR:
-.\scripts\build.ps1 -UseDocker
+.\scripts\build.ps1 -UseDocker -GameVersion 1.4.1
 
 .\scripts\package.ps1
 .\scripts\verify.ps1

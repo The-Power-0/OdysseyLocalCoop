@@ -3492,6 +3492,8 @@ struct Anchor {
 };
 static Anchor sAnchors[ocoop::p0lab::ScenarioCount] = {};
 static void* sReloadActor = nullptr;
+static bool sReloadInFlight = false;
+static bool sReloadHudCreated = false;
 static const char* kNames[ocoop::p0lab::ScenarioCount] = {
     "2 METRO", "3 LAKE", "4 LAVA", "5 FALL", "11 PYLON"
 };
@@ -3579,7 +3581,11 @@ static void Create(void* owner, const void* initInfo) {
     appear(sHud);
     Render();
     sHiddenBySceneEnd = false;
-    Logging.Log("[OCoop] P0-LAB created. One-scene checkpoint menu: UP cycle, A twice execute, MINUS toggle.");
+    if (sReloadInFlight) {
+        sReloadHudCreated = true;
+        Logging.Log("[OCoop] P0-LAB reload: new scene HUD created");
+    }
+    Logging.Log("[OCoop] P0-LAB created. 11 actions: UP cycle, A twice execute, MINUS toggle.");
 }
 static void DetachForSceneReset() {
     sOwner = nullptr; sHud = nullptr;
@@ -3659,7 +3665,7 @@ static void Execute(void* p1, void* p2, ocoop::p0lab::Action action) {
 #if OCOOP_GAME == 130 && PATCH_0052_ENABLED
         if (!ocoop::config::Get().debugNativeReloadEnabled) { sMessage = "DISABLED"; return; }
         if (!SafeToMove(p1, p2)) { sMessage = "GROUND"; return; }
-        if (patch0052::sKillPending || sReloadActor) { sMessage = "BUSY"; return; }
+        if (patch0052::sKillPending || sReloadActor || sReloadInFlight) { sMessage = "BUSY"; return; }
         sReloadActor = p1;
         sMessage = "QUEUED";
         Logging.Log("[OCoop] P0-LAB native reload queued p1=%p", p1);
@@ -3739,6 +3745,11 @@ static void Tick(void* actor) {
     if (!sTickReady) {
         sTickReady = true;
         Logging.Log("[OCoop] P0-LAB tick ready p1=%p p2=%p port=%d", p1, p2, port);
+        if (sReloadInFlight && sReloadHudCreated) {
+            Logging.Log("[OCoop] P0-LAB reload: new scene two-player control hook ready");
+            sReloadInFlight = false;
+            sReloadHudCreated = false;
+        }
     }
     auto minus = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerMinus);
     auto up = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerUp);
@@ -3832,8 +3843,18 @@ static bool PrepareNativeReload(void* sequence) {
         idle = !patch0052::sKillPending && *((unsigned char*)holder + 0x49) == 0;
         const uintptr_t file = *(const uintptr_t*)((uintptr_t)holder + PatchOffsets::GameDataHolderFile);
         if (IsPtr8(file)) {
+            const auto a = *(const uintptr_t*)(file + PatchOffsets::GameDataFileStageNameA);
+            const auto b = *(const uintptr_t*)(file + PatchOffsets::GameDataFileStageNameB);
+            const auto c = *(const uintptr_t*)(file + PatchOffsets::GameDataFileStageNameC);
+            const auto src = *(const uintptr_t*)(file + PatchOffsets::GameDataFileRestartSource);
+            // These are the same string fields used by the audited restart helper.
+            // Reject obviously invalid storage before it touches the native state.
+            const auto strOk = [](uintptr_t p) { return p > 0x10000 && p < 0x8000000000UL; };
             ready = *(const uintptr_t*)(file + PatchOffsets::GameDataFileHolder) == (uintptr_t)holder &&
-                *((unsigned char*)holder + PatchOffsets::GameDataHolderRestartGuard) == 0;
+                *((unsigned char*)holder + PatchOffsets::GameDataHolderRestartGuard) == 0 &&
+                IsPtr8(a) && IsPtr8(b) && IsPtr8(c) && strOk(src) &&
+                strOk(*(const uintptr_t*)a) && strOk(*(const uintptr_t*)b) &&
+                strOk(*(const uintptr_t*)c) && **(const char* const*)a != '\0';
         }
     }
     auto saveDone = OcoopFn<bool (*)()>(PatchOffsets::AlIsDoneSaveDataSequence);
@@ -3850,7 +3871,17 @@ static bool PrepareNativeReload(void* sequence) {
         return false;
     }
     patch0052::RestartStageV130(holder);
-    Logging.Log("[OCoop] P0-LAB native reload prepared; handing off to PATCH-0052");
+    auto getNext = OcoopFn<const char* (*)(const void*)>(PatchOffsets::GameDataHolderGetNextStageName);
+    const char* next = getNext(holder);
+    if ((uintptr_t)next <= 0x10000 || (uintptr_t)next >= 0x8000000000UL || !*next) {
+        sMessage = "NO STAGE";
+        Render();
+        Logging.Log("[OCoop] P0-LAB reload: native restart did not yield a valid stage; no scene kill");
+        return false;
+    }
+    sReloadInFlight = true;
+    sReloadHudCreated = false;
+    Logging.Log("[OCoop] P0-LAB native reload prepared target=%s; handing off to PATCH-0052", next);
     return true;
 }
 #endif

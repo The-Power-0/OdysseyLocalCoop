@@ -3852,9 +3852,8 @@ static bool PrepareNativeReload(void* sequence) {
             const auto strOk = [](uintptr_t p) { return p > 0x10000 && p < 0x8000000000UL; };
             ready = *(const uintptr_t*)(file + PatchOffsets::GameDataFileHolder) == (uintptr_t)holder &&
                 *((unsigned char*)holder + PatchOffsets::GameDataHolderRestartGuard) == 0 &&
-                IsPtr8(a) && IsPtr8(b) && IsPtr8(c) && strOk(src) &&
-                strOk(*(const uintptr_t*)a) && strOk(*(const uintptr_t*)b) &&
-                strOk(*(const uintptr_t*)c) && **(const char* const*)a != '\0';
+                strOk(a) && strOk(b) && strOk(c) && strOk(src) &&
+                *reinterpret_cast<const char*>(a) != '\0';
         }
     }
     auto saveDone = OcoopFn<bool (*)()>(PatchOffsets::AlIsDoneSaveDataSequence);

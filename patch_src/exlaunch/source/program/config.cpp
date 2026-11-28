@@ -32,6 +32,7 @@ Settings Defaults() {
     settings.bubbleCooldownSeconds = 5.0f;
     settings.bubbleWaterCountsAsGround = true;
     settings.debugMenuEnabled = false;
+    settings.debugNativeReloadEnabled = false;
     settings.debugHudX = 560.0f;
     settings.debugHudY = 0.0f;
     settings.coinRaceEnabled = true;
@@ -181,6 +182,8 @@ void ParseConfigText(const char* text, size_t length, Settings* settings) {
             settings->bubbleWaterCountsAsGround = value != 0.0f;
         } else if (KeyEquals(cur, keyEnd, "debug.menu.enabled")) {
             settings->debugMenuEnabled = value != 0.0f;
+        } else if (KeyEquals(cur, keyEnd, "debug.native_reload.enabled")) {
+            settings->debugNativeReloadEnabled = value != 0.0f;
         } else if (KeyEquals(cur, keyEnd, "debug.menu.hud_x")) {
             settings->debugHudX = value;
         } else if (KeyEquals(cur, keyEnd, "debug.menu.hud_y")) {
@@ -255,7 +258,8 @@ void LogSettings(const char* state) {
                 state, sSettings.bubbleDistance, sSettings.bubbleHoldSeconds,
                 sSettings.bubbleCooldownSeconds,
                 sSettings.bubbleWaterCountsAsGround ? 1 : 0, kConfigPath);
-    Logging.Log("[OCoop] P0-LAB config enabled=%d hud=(%.0f,%.0f) (development-only; no stage/save warp)", sSettings.debugMenuEnabled ? 1 : 0, sSettings.debugHudX, sSettings.debugHudY);
+    Logging.Log("[OCoop] P0-LAB native reload enabled=%d", (int)sSettings.debugNativeReloadEnabled);
+    Logging.Log("[OCoop] P0-LAB config enabled=%d hud=(%.0f,%.0f) (development-only; reload separately opted in)", sSettings.debugMenuEnabled ? 1 : 0, sSettings.debugHudX, sSettings.debugHudY);
     Logging.Log("[OCoop] CONFIG-0001 %s competition coin=%d/%d moon=%d/%d panel=(%.0f,%.0f)",
                 state, sSettings.coinRaceEnabled ? 1 : 0, sSettings.coinRaceTarget,
                 sSettings.moonRaceEnabled ? 1 : 0, sSettings.moonRaceTarget,

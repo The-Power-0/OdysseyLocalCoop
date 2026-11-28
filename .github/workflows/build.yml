@@ -11,6 +11,13 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - game: "1.0.0"
+            artifact: OdysseyLocalCoop-v0.1.0-alpha.5
+          - game: "1.4.1"
+            artifact: OdysseyLocalCoop-v0.1.0-alpha.5-smo-1.4.1
     steps:
       - name: Check out pinned sources
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -19,7 +26,7 @@ jobs:
 
       - name: Build in pinned devkitPro image
         shell: pwsh
-        run: ./scripts/build.ps1 -UseDocker
+        run: ./scripts/build.ps1 -UseDocker -GameVersion "${{ matrix.game }}"
 
       - name: Package
         shell: pwsh
@@ -29,10 +36,26 @@ jobs:
         shell: pwsh
         run: ./scripts/verify.ps1
 
+      - name: Verify English co-op guide and package for Ryujinx
+        if: matrix.game == '1.4.1'
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I patch_src/exlaunch/source tests/coop_guide_test.cpp -o /tmp/odyssey-coop-guide-test
+          /tmp/odyssey-coop-guide-test
+          python3 scripts/package-ryujinx.py
+
+      - name: Upload drag-and-drop Ryujinx ZIP
+        if: matrix.game == '1.4.1'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: OdysseyTogether-smo-1.4.1-Ryujinx
+          path: artifacts/release/*-Ryujinx.zip
+          if-no-files-found: error
+          archive: false
+
       - name: Upload verified package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: OdysseyLocalCoop-v0.1.0-alpha.5
+          name: ${{ matrix.artifact }}
           path: |
             artifacts/package/*.zip
             artifacts/package/*.sha256

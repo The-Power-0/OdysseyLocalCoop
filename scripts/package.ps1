@@ -32,6 +32,16 @@ $npdmPath = Join-Path $BuildRoot "main.npdm"
 foreach ($path in @($buildReportPath, $subsdkPath, $npdmPath)) { if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Build first; missing $path" } }
 $buildReport = Get-Content -Raw -LiteralPath $buildReportPath | ConvertFrom-Json
 if ($buildReport.status -ne "PASS" -or $buildReport.version -ne $Version -or $buildReport.exlaunch_commit -ne $ExpectedExlaunchCommit) { throw "Build report does not match the requested release." }
+$gameVersion = [string]$buildReport.game_version
+if ($gameVersion -notin @("1.0.0", "1.4.1")) { throw "Unsupported game version in build report: $gameVersion" }
+foreach ($binaryPath in @($subsdkPath, $npdmPath)) {
+    $artifactPath = "artifacts/build/$([IO.Path]::GetFileName($binaryPath))"
+    $record = @($buildReport.outputs | Where-Object { $_.path -eq $artifactPath })
+    if ($record.Count -ne 1 -or (Get-FileHash -Algorithm SHA256 -LiteralPath $binaryPath).Hash -ne $record[0].sha256) {
+        throw "Binary does not match the build report: $binaryPath"
+    }
+}
+
 
 $settingsPath = Join-Path $RepoRoot "romfs\OCoop\settings.ini"
 $hudPath = Join-Path $RepoRoot "romfs\LayoutData\OCoopScoreBoard.szs"
@@ -42,6 +52,7 @@ if ($hudSha256 -ne $ExpectedHudSha256) { throw "Competition HUD hash does not ma
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 $packageName = "OdysseyLocalCoop-$Version"
+if ($gameVersion -eq "1.4.1") { $packageName += "-smo-1.4.1" }
 $stageRoot = Join-Path $OutputRoot $packageName
 if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath (Assert-ChildPath -Root $OutputRoot -Path $stageRoot) -Recurse -Force }
 $contentRoot = Join-Path $stageRoot "payload\contents\$ProgramId"
@@ -62,6 +73,7 @@ $packageManifest = [ordered]@{
     schema_version = 1
     name = "Odyssey Local Co-op"
     version = $Version
+    game_version = $gameVersion
     program_id = $ProgramId
     primary_target = "Ryujinx"
     atmosphere_support = "experimental"
@@ -98,7 +110,7 @@ try {
 $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash
 Write-Utf8 -Path "$zipPath.sha256" -Content "$zipHash *$([IO.Path]::GetFileName($zipPath))`n"
 $report = [ordered]@{
-    schema_version = 1; status = "PASS"; version = $Version; program_id = $ProgramId
+    schema_version = 1; status = "PASS"; version = $Version; game_version = $gameVersion; program_id = $ProgramId
     zip = [ordered]@{ path = $zipPath; bytes = (Get-Item -LiteralPath $zipPath).Length; sha256 = $zipHash }
     payload_files = $payloadRecords; competition_hud = "included"; competition_hud_sha256 = $hudSha256; competition_available = $true; competition_enabled = $false
 }

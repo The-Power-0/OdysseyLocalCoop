@@ -2,14 +2,21 @@
 #include "lib/patch/patcher_impl.hpp"
 
 #include "program/config.hpp"
+#include "program/camera_visibility.hpp"
+#include "program/coop_guide.hpp"
+#include "program/p0_test_lab.hpp"
+#include "program/recovery_policy.hpp"
 #include "program/diagnostics.hpp"
 #include "program/diagnostics_profile.hpp"
 #include "program/loggers.hpp"
 
 #include "nn/fs/fs_files.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <new>
 
 /*
@@ -19,6 +26,20 @@
  * StageScene, each bound to its own controller port.
  */
 
+/* Target game version: 100 = Odyssey 1.0.0, 130 = the executable shared by 1.3.0 and 1.4.1 on Switch.
+ * Set via OCOOP_GAME in config.mk / `make OCOOP_GAME=130`. */
+#ifndef OCOOP_GAME
+#define OCOOP_GAME 100
+#endif
+#if OCOOP_GAME != 100 && OCOOP_GAME != 130
+#error "OCOOP_GAME must be 100 (SMO 1.0.0) or 130 (SMO 1.3.0)"
+#endif
+
+#if OCOOP_GAME == 130
+#include "program/offsets_v130.hpp"
+#define OCOOP_GAME_VERSION_STRING "v1.4.1 (original Switch executable)"
+#else
+#define OCOOP_GAME_VERSION_STRING "v1.0.0"
 /* NSO .text offsets for Odyssey 1.0.0, from OdysseyDecomp data/file_list.yml.
  * Ghidra VA = NSO offset + 0x7100000000. */
 namespace PatchOffsets {
@@ -461,7 +482,11 @@ namespace PatchOffsets {
      * "BindStart sent but judge rejects". AlIsMsgBindStart/AlIsMsgBindInit
      * already exist above; only FloorTouch is new (file_list.yml Matching). */
     constexpr ptrdiff_t AlIsMsgPlayerFloorTouch = 0x8f6ea4;             // al::isMsgPlayerFloorTouch(const al::SensorMsg*) — file_list.yml (136 B, Matching)
+    /* PlayerInfo field offsets (PlayerActorBase::getPlayerInfo, vtable +0x1a8). */
+    constexpr ptrdiff_t PlayerInfoFormSensorCollisionArranger = 0x78;  // rs::getPlayerHeadPos: ldr x0,[x0,#0x78] @0x56f640
+    constexpr ptrdiff_t PlayerInfoInput = 0x80;                        // PlayerInfo::mInput
 }
+#endif  // OCOOP_GAME
 
  
 #define PATCH_0001_ENABLED 1
@@ -722,8 +747,48 @@ static bool IsPauseMenuSeparatePlayReturn(uintptr_t lr) {
            nso == (uintptr_t)PatchOffsets::PauseMenuSetNormalSeparateReturn ||
            nso == (uintptr_t)PatchOffsets::PauseMenuWaitLabelSeparateReturn ||
            nso == (uintptr_t)PatchOffsets::PauseMenuWaitGuardSeparateReturn ||
+#if OCOOP_GAME == 130
+           /* 1.3.0 added two more pause-menu isSeparatePlay queries. */
+           nso == (uintptr_t)PatchOffsets::PauseMenuWaitSelectSeparateReturn ||
+           nso == (uintptr_t)PatchOffsets::PauseMenuAfterTitleSeparateReturn ||
+#endif
            nso == (uintptr_t)PatchOffsets::PauseMenuWaitBranchSeparateReturn;
 }
+
+#if OCOOP_GAME == 130
+/* GameDataFunction::restartStage / GameDataFile::restartStage were dead code in
+ * 1.0.0 (only this mod called them) and are gone from 1.3.0. This replays the
+ * body 1.3.0 still inlines at the end of GameDataFile::missAndRestartStage
+ * (0x4c95e4..0x4c9658), which is the 1.0.0 restartStage body with 1.3.0 field
+ * offsets plus one new guard byte. */
+static void RestartStageV130(void* holder) {
+    const uintptr_t base = (uintptr_t)exl::util::modules::GetTargetOffset(0);
+    const uintptr_t file =
+        *(const uintptr_t*)((uintptr_t)holder + PatchOffsets::GameDataHolderFile);
+    *(unsigned char*)(file + PatchOffsets::GameDataFileRestartFlag) = 0;
+
+    const char nullChar =
+        **(const char* const*)(base + PatchOffsets::SeadNullCharGotSlot);
+    if (**(const char* const*)(file + PatchOffsets::GameDataFileStageNameA) == nullChar)
+        return;
+    **(char**)(file + PatchOffsets::GameDataFileStageNameB) = nullChar;
+    **(char**)(file + PatchOffsets::GameDataFileStageNameC) = nullChar;
+
+    const uintptr_t fileHolder =
+        *(const uintptr_t*)(file + PatchOffsets::GameDataFileHolder);
+    if (*(const unsigned char*)(fileHolder + PatchOffsets::GameDataHolderRestartGuard) != 0)
+        return;
+
+    void* str = (void*)(file + PatchOffsets::GameDataFileRestartString);
+    auto slot = *(void (**)(void*))(*(uintptr_t*)str + 0x18);
+    slot(str);
+
+    auto format = reinterpret_cast<void (*)(void*, const char*, ...)>(
+        base + PatchOffsets::SeadBufferedSafeStringFormat);
+    format((void*)(file + PatchOffsets::GameDataFileRestartDest), "%s",
+           *(const char* const*)(file + PatchOffsets::GameDataFileRestartSource));
+}
+#endif
 }
 #endif
 #define PATCH_0016_FALL_TIMEOUT_FRAMES 120
@@ -952,9 +1017,10 @@ struct DestinationState {
     bool inWater;
 
     bool IsSafe() const {
-        return valid && !dead && !abyss && keeperValid && colliderValid &&
-               (grounded ||
-                (ocoop::config::Get().bubbleWaterCountsAsGround && inWater));
+        return ocoop::recovery::CanAnchor({
+            valid, dead, abyss, false, keeperValid, colliderValid,
+            grounded, inWater, ocoop::config::Get().bubbleWaterCountsAsGround
+        });
     }
 };
 
@@ -2662,6 +2728,15 @@ HOOK_DEFINE_TRAMPOLINE(Patch0020ShineCollector) {
 #endif
 #endif
 
+namespace p0debug {
+static void Create(void*, const void*);
+static void End(void*);
+static void OnLayoutStart(void*);
+static void DetachForSceneReset();
+static void Tick(void*);
+static bool InterceptMapOpen();
+} // namespace p0debug
+
 /* StageSceneLayout C1: (this, name, LayoutInitInfo&, PlayerHolder*,
  * SubCameraRenderer*), verified by file_list.yml and Ghidra. */
 HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutCtor) {
@@ -2686,6 +2761,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutCtor) {
 #if PATCH_0019_ENABLED
         coinrace::Create(self, layoutInitInfo);
 #endif
+        p0debug::Create(self, layoutInitInfo);
     }
 };
 HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutEnd) {
@@ -2697,6 +2773,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutEnd) {
         coinrace::End(self);
 #endif
         p2hud::End(self);
+        p0debug::End(self);
         Orig(self);
     }
 };
@@ -2707,6 +2784,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutStart) {
     static void Callback(void* self) {
         Orig(self);
         p2hud::OnLayoutStart(self);
+        p0debug::OnLayoutStart(self);
 #if PATCH_0019_ENABLED
         coinrace::OnLayoutStart(self);
 #endif
@@ -2720,6 +2798,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0014P2HudLayoutStart) {
  * while a later StageSceneLayout ctor naturally arms the next transition. */
 HOOK_DEFINE_INLINE(Patch0024ChangeWorldDetach) {
     static void Callback(exl::hook::InlineCtx*) {
+        p0debug::DetachForSceneReset();
         bool hadP2Hud = false;
         bool hadCompetitionHud = false;
 #if PATCH_0014_ENABLED
@@ -2822,6 +2901,9 @@ namespace patch0008 {
     static float sAppliedFactor = 1.0f;
     static float sSeparation = -1.0f;
     static unsigned sFreshPoseCalls = 0;
+    static bool sSharedTarget = false;
+    static ocoop::camera::View sView;
+    static unsigned sViewTicks = 0;
 
     static float BaseZoom() { return ocoop::config::Get().cameraBaseZoom; }
     static float MaxZoom() { return ocoop::config::Get().cameraMaxZoom; }
@@ -2829,8 +2911,18 @@ namespace patch0008 {
     static float SeparationFull() { return ocoop::config::Get().cameraSeparationFull; }
     static float Lerp() { return ocoop::config::Get().cameraLerp; }
 
-    static void ObserveHorizontalSeparation(float dx, float dz) {
-        float separation = __builtin_sqrtf(dx * dx + dz * dz);
+    static void Reset() {
+        sTargetFactor = 1.0f;
+        sAppliedFactor = 1.0f;
+        sSeparation = -1.0f;
+        sFreshPoseCalls = 0;
+        sSharedTarget = false;
+        sViewTicks = 0;
+    }
+
+    static void ObserveSeparation(float dx, float dy, float dz, bool sharedTarget = true) {
+        const float vertical = dy * 0.65f;
+        const float separation = __builtin_sqrtf(dx * dx + vertical * vertical + dz * dz);
         if (!(separation >= 0.0f) || separation > 100000.0f)
             return;
 
@@ -2845,9 +2937,25 @@ namespace patch0008 {
         sSeparation = separation;
         sTargetFactor = settings.cameraBaseZoom +
                         t * (settings.cameraMaxZoom - settings.cameraBaseZoom);
-        /* A scalar snapshot only: if player-target observation stops, final
-         * pose scaling fades safely back to Odyssey's unmodified camera. */
-        sFreshPoseCalls = 180;
+        // Briefly bridge call-order gaps without carrying zoom into another shot.
+        sFreshPoseCalls = 8;
+        sSharedTarget = sharedTarget;
+        if (!sharedTarget)
+            sViewTicks = 0;
+    }
+
+    static void CaptureView(const float* eye, const float* at, const float* up, const void* poser) {
+        if (!sSharedTarget || !sFreshPoseCalls) {
+            sViewTicks = 0;
+            return;
+        }
+
+        const auto fovy = OcoopFn<float (*)(const void*)>(PatchOffsets::CameraPoserGetFovyDegree);
+        const bool valid = sView.Set({eye[0], eye[1], eye[2]}, {at[0], at[1], at[2]},
+                                     {up[0], up[1], up[2]}, fovy(poser));
+        // Both player hooks can evaluate the same sample, with a short allowance
+        // for camera/actor update order. An inactive poser quickly loses authority.
+        sViewTicks = valid ? 4 : 0;
     }
 
     static void ScaleFinalPose(float* eye, const float* at, void* poser) {
@@ -2862,7 +2970,12 @@ namespace patch0008 {
         }
 
         const auto& settings = ocoop::config::Get();
-        sAppliedFactor += (sTargetFactor - sAppliedFactor) * settings.cameraLerp;
+        // Make room quickly as players separate and ease back in when they reunite.
+        const float outwardLerp = settings.cameraLerp * 2.0f;
+        const float lerp = sTargetFactor > sAppliedFactor
+                         ? (outwardLerp < 1.0f ? outwardLerp : 1.0f)
+                         : settings.cameraLerp;
+        sAppliedFactor += (sTargetFactor - sAppliedFactor) * lerp;
         if (sAppliedFactor < 1.0f)
             sAppliedFactor = 1.0f;
         else if (sAppliedFactor > settings.cameraMaxZoom)
@@ -3017,6 +3130,11 @@ namespace patch0009 {
         return getPlayerActor(actor, 0) == actor;
     }
 
+    static bool IsTerminalPartner(void* actor) {
+        return (sP1Terminal && IsP1(actor)) ||
+               (sP2Terminal && IsP2(actor));
+    }
+
 #if PATCH_0035_ENABLED && PATCH_0003_ENABLED
     static bool SeedP1DelayedRecoverySafety(void* actor, void* recovery) {
         if (!sP1Terminal || !IsP1(actor) || !IsPtr8((uintptr_t)recovery))
@@ -3037,6 +3155,12 @@ namespace patch0009 {
         if (!IsPtr8((uintptr_t)partner)) {
             Logging.Log("[OCoop] PATCH-0035 p1 delayed recovery seed pending: no live partner actor=%p",
                         actor);
+            return false;
+        }
+        // A terminal/airborne P2 is not a valid seed for P1's delayed recovery.
+        // Leave Odyssey's existing safety point untouched when no safe anchor exists.
+        if (sP2Terminal || !bubblesafety::Evaluate(partner).IsSafe()) {
+            Logging.Log("[OCoop] P0-RECOVERY p1 seed deferred: partner not grounded or terminal");
             return false;
         }
 
@@ -3333,11 +3457,327 @@ namespace patch0009 {
 }
 #endif
 
+
+#if PATCH_0043_ENABLED || PATCH_0044_ENABLED
+namespace bubblesafety {
+/* A recovery anchor must be both physically safe and outside the private
+ * terminal-death lifecycle. The native status query can lag our P1/P2 flags
+ * during death transitions; checking both closes that window. */
+static bool IsEligibleAnchor(const void* partner) {
+    if (!IsPtr8((uintptr_t)partner))
+        return false;
+#if PATCH_0009_ENABLED && PATCH_0010_ENABLED
+    if (patch0009::IsTerminalPartner((void*)partner))
+        return false;
+#endif
+    return Evaluate(partner).IsSafe();
+}
+}  // namespace bubblesafety
+#endif
+
+/* Developer P0 Test Lab. Separate scene-owned layout using the existing
+ * custom scoreboard asset to avoid bundling proprietary game UI. All actions
+ * are gated behind debug.menu.enabled=1 and only run from P1 control(). */
+namespace p0debug {
+using ocoop::p0lab::Menu;
+using ocoop::p0lab::Command;
+static Menu sMenu{};
+static void* sHud = nullptr;
+static void* sOwner = nullptr;
+static bool sHiddenBySceneEnd = false;
+struct Vec2 { float x, y; };
+struct Anchor {
+    bool valid = false;
+    float pos[2][3] = {};
+};
+static Anchor sAnchors[4] = {};
+static const char* kNames[4] = {
+    "METRO BOSS", "LAKE PAINT", "P2 LAVA 1HP", "DOUBLE FALL"
+};
+static const int kIssue[4] = {2, 3, 4, 5};
+static const char* sMessage = "UP NEXT, A ARM";
+static char16_t sNameText[48] = {};
+static char16_t sMsgText[48] = {};
+static char16_t sIssueText[12] = {};
+
+static void ToUtf16(char16_t* out, unsigned cap, const char* str) {
+    if (!out || cap == 0) return;
+    unsigned idx = 0;
+    while (str && str[idx] && idx + 1 < cap) {
+        out[idx] = static_cast<unsigned char>(str[idx]);
+        ++idx;
+    }
+    out[idx] = 0;
+}
+static void SetText(const char* pane, const char16_t* value) {
+    if (!IsPtr8((uintptr_t)sHud)) return;
+    auto set = OcoopFn<void (*)(void*, const char*, const char16_t*)>(
+        PatchOffsets::LayoutSetPaneString);
+    set((void*)((uintptr_t)sHud + 0x08), pane, value);
+}
+static void SetTextPair(const char* a, const char* b, const char16_t* value) {
+    SetText(a, value); SetText(b, value);
+}
+static void Render() {
+    if (!IsPtr8((uintptr_t)sHud) || !sMenu.visible) return;
+    ToUtf16(sNameText, 48, kNames[sMenu.selected]);
+    ToUtf16(sMsgText, 48, sMenu.armed ? "A CONFIRM!" : sMessage);
+    sIssueText[0] = u'#';
+    sIssueText[1] = u'0' + kIssue[sMenu.selected];
+    sIssueText[2] = 0;
+    SetTextPair("LblPlayer1", "LblPlayer1Sh", u"P0 TEST LAB");
+    SetTextPair("LblPlayer2", "LblPlayer2Sh", sIssueText);
+    SetTextPair("CoinP1", "CoinP1Sh", sNameText);
+    SetTextPair("CoinP2", "CoinP2Sh", sMsgText);
+}
+static void HideDecorations() {
+    if (!IsPtr8((uintptr_t)sHud)) return;
+    auto hide = OcoopFn<void (*)(void*, const char*)>(PatchOffsets::LayoutHidePane);
+    void* layout = (void*)((uintptr_t)sHud + 0x08);
+    const char* panes[] = {
+        "IconGoldCoin", "IconPurpleCoin", "IconP1Coin", "IconP2Coin",
+        "IconMoonTotal", "MoonP1_1", "MoonP1_2", "MoonP1_3", "MoonP1_4", "MoonP1_5",
+        "MoonP2_1", "MoonP2_2", "MoonP2_3", "MoonP2_4", "MoonP2_5"
+    };
+    for (const char* pane : panes) hide(layout, pane);
+}
+static void Create(void* owner, const void* initInfo) {
+    // The previous StageScene may have been destroyed without a layout end;
+    // never retain its layout pointer or scene-local markers across rebuilds.
+    DetachForSceneReset();
+    if (!ocoop::config::Get().debugMenuEnabled ||
+        !IsPtr8((uintptr_t)owner) || !IsPtr8((uintptr_t)initInfo))
+        return;
+    sMenu = {};
+    for (auto& anchor : sAnchors) anchor.valid = false;
+    sMessage = "UP NEXT, A ARM";
+    sOwner = owner;
+    sHud = ::operator new(0x130);
+    if (!IsPtr8((uintptr_t)sHud)) { sOwner = nullptr; return; }
+    auto ctor = OcoopFn<void (*)(void*, const char*)>(PatchOffsets::LayoutActorCtor);
+    auto init = OcoopFn<void (*)(void*, const void*, const char*, const char*)>(
+        PatchOffsets::LayoutActorInit);
+    auto appear = OcoopFn<void (*)(void*)>(PatchOffsets::LayoutActorAppear);
+    auto setPaneTrans = OcoopFn<void (*)(void*, const char*, const Vec2&)>(
+        PatchOffsets::LayoutSetPaneLocalTrans2);
+    ctor(sHud, "[OCoop] Developer P0 Test Lab");
+    init(sHud, initInfo, "OCoopScoreBoard", nullptr);
+    const Vec2 pos = {-340.0f, -160.0f};
+    setPaneTrans((void*)((uintptr_t)sHud + 0x08), "All", pos);
+    HideDecorations();
+    Render();
+    appear(sHud);
+    sHiddenBySceneEnd = false;
+    Logging.Log("[OCoop] P0-LAB created. One-scene checkpoint menu: UP cycle, A twice execute, MINUS toggle.");
+}
+static void DetachForSceneReset() {
+    sOwner = nullptr; sHud = nullptr;
+    sHiddenBySceneEnd = false;
+    for (auto& anchor : sAnchors) anchor.valid = false;
+}
+static void End(void* owner) {
+    if (owner != sOwner) return;
+    if (IsPtr8((uintptr_t)sHud)) {
+        auto kill = OcoopFn<void (*)(void*)>(PatchOffsets::AlLayoutActorKill);
+        kill(sHud);
+    }
+    sHiddenBySceneEnd = true;
+}
+static void OnLayoutStart(void* owner) {
+    if (owner != sOwner || !IsPtr8((uintptr_t)sHud) || !sHiddenBySceneEnd) return;
+    auto appear = OcoopFn<void (*)(void*)>(PatchOffsets::LayoutActorAppear);
+    if (sMenu.visible) appear(sHud);
+    sHiddenBySceneEnd = false;
+    Render();
+}
+static bool InterceptMapOpen() {
+    return ocoop::config::Get().debugMenuEnabled && IsPtr8((uintptr_t)sHud);
+}
+static bool ResolvePlayers(void* self, void** p1, void** p2) {
+    if (!IsPtr8((uintptr_t)self)) return false;
+    auto getPlayer = OcoopFn<void* (*)(const void*, int)>(
+        PatchOffsets::AlGetPlayerActor);
+    *p1 = getPlayer(self, 0);
+    *p2 = getPlayer(self, 1);
+    return IsPtr8((uintptr_t)*p1) && IsPtr8((uintptr_t)*p2) && *p1 == self;
+}
+static bool SafeToMove(void* p1, void* p2) {
+    if (!IsPtr8((uintptr_t)p1) || !IsPtr8((uintptr_t)p2)) return false;
+    if (patch0009::sP1Terminal || patch0009::sP2Terminal) return false;
+    return bubblesafety::Evaluate(p1).IsSafe() &&
+           bubblesafety::Evaluate(p2).IsSafe();
+}
+static void SetupHealthP2() {
+    if (patch0009::sP2Terminal || !patch0009::sP2HealthValid) {
+        sMessage = "P2 TERMINAL";
+        return;
+    }
+    patch0009::sP2Health = 1;
+    p2hud::NotifyHealth(1, patch0009::sP2MaxHealth);
+    sMessage = "P2 HP IS 1";
+    Logging.Log("[OCoop] P0-LAB issue=%d P2 private health prepared 1/%d",
+                kIssue[sMenu.selected], patch0009::sP2MaxHealth);
+}
+static void Execute(void* p1, void* p2) {
+    if (!SafeToMove(p1, p2)) {
+        sMessage = "NEED SAFE GROUND";
+        Logging.Log("[OCoop] P0-LAB action blocked: player ungrounded/captured/terminal");
+        return;
+    }
+    const unsigned idx = sMenu.selected;
+    auto getTrans = OcoopFn<const float* (*)(const void*)>(
+        PatchOffsets::AlGetTrans);
+    auto setTrans = OcoopFn<void (*)(void*, const float*)>(
+        PatchOffsets::AlSetTrans);
+    Anchor& a = sAnchors[idx];
+    if (!a.valid) {
+        const float* p[2] = {getTrans(p1), getTrans(p2)};
+        if (!p[0] || !p[1]) { sMessage = "INVALID POSITION"; return; }
+        for (int n = 0; n < 2; ++n)
+            for (int d = 0; d < 3; ++d)
+                a.pos[n][d] = p[n][d];
+        a.valid = true;
+        sMessage = "MARKED - A REPLAY";
+    } else {
+        // Same-scene only; no persistent pointers and no save/quest mutation.
+        setTrans(p1, a.pos[0]);
+        setTrans(p2, a.pos[1]);
+        sMessage = "POSITION REPLAY";
+    }
+    if (idx >= 2) SetupHealthP2();
+    Logging.Log("[OCoop] P0-LAB issue=%d %s p1=(%.0f,%.0f,%.0f) p2=(%.0f,%.0f,%.0f)",
+                kIssue[idx], a.valid ? "mark/replay" : "rejected",
+                a.pos[0][0], a.pos[0][1], a.pos[0][2],
+                a.pos[1][0], a.pos[1][1], a.pos[1][2]);
+}
+static void Tick(void* actor) {
+    if (!ocoop::config::Get().debugMenuEnabled ||
+        !IsPtr8((uintptr_t)sHud) || !IsPtr8((uintptr_t)actor)) return;
+    void* p1 = nullptr;
+    void* p2 = nullptr;
+    if (!ResolvePlayers(actor, &p1, &p2)) return;
+    auto getPort = OcoopFn<int (*)(int)>(PatchOffsets::AlGetPlayerControllerPort);
+    const int port = getPort(0);
+    if (port < 0) return;
+    auto minus = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerMinus);
+    auto up = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerUp);
+    auto decide = OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsTriggerUiDecide);
+    const bool toggle = minus(port);
+    if (toggle) {
+        ocoop::p0lab::Apply(sMenu, Command::Toggle);
+        if (sMenu.visible) {
+            auto appear = OcoopFn<void (*)(void*)>(PatchOffsets::LayoutActorAppear);
+            appear(sHud);
+            sMessage = "UP NEXT, A ARM";
+        } else {
+            auto kill = OcoopFn<void (*)(void*)>(PatchOffsets::AlLayoutActorKill);
+            kill(sHud);
+        }
+        Render();
+        return;
+    }
+    if (!sMenu.visible) return;
+    if (up(port)) {
+        ocoop::p0lab::Apply(sMenu, Command::Next);
+        sMessage = sAnchors[sMenu.selected].valid ? "A REPLAY" : "A MARK";
+        Render();
+    } else if (decide((const void*)((uintptr_t)p1 + 0x20))) {
+        if (ocoop::p0lab::Apply(sMenu, Command::Confirm).execute)
+            Execute(p1, p2);
+        Render();
+    }
+}
+} // namespace p0debug
+
 /* char* fields need no alignment; statically known to be C strings
  * (rs::getInitPlayerModelName / getInitCapTypeName read them as such). */
 static bool IsStrPtr(uintptr_t p) {
     return p > 0x10000 && p < 0x8000000000UL;
 }
+
+#if OCOOP_GAME == 130
+namespace pylon {
+// The wire owns its native stage request. The area filter, and later the
+// stage poll that saves the traveling capture, both query holder index zero.
+static const void* sRiderLookupHolder = nullptr;
+static bool sLoggedDeathAreaProtection = false;
+static bool sLoggedPreMovementProtection = false;
+static unsigned sAbyssTraceCount = 0;
+static struct {
+    const void* gameData;
+    const void* playerHolder;
+    const void* rider;
+} sPendingExit{};
+
+static void Reset() {
+    sPendingExit = {};
+    sLoggedDeathAreaProtection = false;
+    sLoggedPreMovementProtection = false;
+    sAbyssTraceCount = 0;
+}
+
+class ScopedRiderLookup {
+public:
+    explicit ScopedRiderLookup(const void* holder) : mPrevious(sRiderLookupHolder) {
+        sRiderLookupHolder = holder;
+    }
+    ~ScopedRiderLookup() { sRiderLookupHolder = mPrevious; }
+
+private:
+    const void* mPrevious;
+};
+
+static const void* CapturedWireFromKeeper(uintptr_t keeper) {
+    if (!IsPtr8(keeper))
+        return nullptr;
+    const uintptr_t actor = *reinterpret_cast<const uintptr_t*>(keeper + 0x68);
+    if (!IsPtr8(actor) || *reinterpret_cast<const uintptr_t*>(keeper + 0x70) == 0)
+        return nullptr;
+    const auto vtableSymbol =
+        *OcoopFn<const uintptr_t*>(PatchOffsets::ElectricWireVtableGotSlot);
+    if (!IsPtr8(vtableSymbol) || *reinterpret_cast<const uintptr_t*>(actor) != vtableSymbol + 0x18)
+        return nullptr;
+    return reinterpret_cast<const void*>(actor);
+}
+
+static const void* CapturedWire(const void* player) {
+    if (!IsPtr8(reinterpret_cast<uintptr_t>(player)))
+        return nullptr;
+    const auto* keeperSlot = static_cast<const unsigned char*>(player) + 0x208;
+    return CapturedWireFromKeeper(*reinterpret_cast<const uintptr_t*>(keeperSlot));
+}
+
+static bool IsScriptedWire(const void* wire) {
+    // ElectricWire::init reads ElectricWireStartDemo into this field.
+    return wire && *(static_cast<const unsigned char*>(wire) + 0x2eb) == 1;
+}
+
+static unsigned long CallerOffset(uintptr_t address) {
+    const auto base = reinterpret_cast<uintptr_t>(exl::util::modules::GetTargetOffset(0));
+    return exl::util::GetMainModuleInfo().m_Text.InRange(address) ? address - base : 0;
+}
+
+static bool StageChangeRequested(const void* gameData) {
+    return *(static_cast<const unsigned char*>(gameData) + 0x49) != 0;
+}
+}  // namespace pylon
+#endif
+
+#if PATCH_0006_ENABLED
+namespace separationbubble {
+    struct State {
+        ocoop::recovery::SeparationGrace grace;
+        ocoop::recovery::SeparationGrace outsideGrace;
+        unsigned cooldown;
+        bool destinationBlocked;
+        float previousPosition[3];
+        bool hasPreviousPosition;
+        float speed;
+    };
+
+    static State sPlayers[4]{};
+}
+#endif
 
 #if PATCH_0001_ENABLED
 namespace patch0001 {
@@ -3362,6 +3802,16 @@ HOOK_DEFINE_INLINE(Patch0001CaptureInitInfo) {
          * settings must therefore load here; the later layout reload makes HUD
          * placement consume the same file for the new scene. */
         ocoop::config::Reload();
+#if OCOOP_GAME == 130
+        pylon::Reset();
+#endif
+#if PATCH_0008_ENABLED
+        patch0008::Reset();
+#endif
+#if PATCH_0006_ENABLED
+        for (auto& state : separationbubble::sPlayers)
+            state = {};
+#endif
 #if PATCH_0045_ENABLED
         distancebubblecamera::ResetAll();
 #endif
@@ -3607,7 +4057,10 @@ HOOK_DEFINE_TRAMPOLINE(Patch0003RecoverToPartner) {
                 }
             }
 
-            if (IsPtr8((uintptr_t)partner)) {
+            // Never overwrite the native recovery point with an airborne,
+            // captured-but-ungrounded, Abyss or terminal teammate position.
+            // If no safe teammate exists, Orig retains Odyssey's own destination.
+            if (bubblesafety::IsEligibleAnchor(partner)) {
                 const float* pos = getTrans(partner);
                 const float* grav = getGravity((const void*)actor);
                 if (pos && grav) {
@@ -3623,7 +4076,12 @@ HOOK_DEFINE_TRAMPOLINE(Patch0003RecoverToPartner) {
                                 PATCH_0003_POP_UP_OFFSET);
                 }
             } else {
-                Logging.Log("[OCoop] PATCH-0003 no partner for actor=%p (solo recovery)", (void*)actor);
+                static unsigned blocked = 0;
+                if (blocked < 16) {
+                    ++blocked;
+                    Logging.Log("[OCoop] P0-RECOVERY start native destination kept: no safe partner actor=%p count=%u",
+                                (void*)actor, blocked);
+                }
             }
         }
         Orig(self, height);
@@ -3659,7 +4117,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0003ReassertDestination) {
                     else if (partner == nullptr)
                         partner = p;
                 }
-                if (IsPtr8((uintptr_t)partner) && selfIdx >= 0 && selfIdx < 4) {
+                if (selfIdx >= 0 && selfIdx < 4 &&
+                    bubblesafety::IsEligibleAnchor(partner)) {
                     const float* pre = getSafetyPoint((void*)recovery);
                     const float* pos = getTrans(partner);
                     const float* grav = getGravity((const void*)actor);
@@ -3747,7 +4206,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0044HoldBubblePopForSafePartner) {
             bubblesafety::Evaluate(partner);
         /* A terminal/Abyss partner belongs to the existing miss/respawn
          * lifecycle. Fail open there instead of holding both players forever. */
-        if (destination.dead || destination.abyss) {
+        if (destination.dead || destination.abyss ||
+            patch0009::IsTerminalPartner(partner)) {
             sHolding[selfIdx] = false;
             return true;
         }
@@ -3864,11 +4324,148 @@ static int sQueryIdx = -1;
 
 HOOK_DEFINE_TRAMPOLINE(Patch0017TryGetPlayerRedirect) {
     static void* Callback(const void* holder, int idx) {
+#if OCOOP_GAME == 130
+        if (idx == 0 && holder && holder == pylon::sRiderLookupHolder)
+            return Orig(holder, 1);
+#endif
         if (idx == 0 && patch0017::sQueryIdx > 0)
             idx = patch0017::sQueryIdx;
         return Orig(holder, idx);
     }
 };
+
+#if OCOOP_GAME == 130
+HOOK_DEFINE_TRAMPOLINE(Patch0053PylonDeathArea) {
+    static bool Callback(void* keeper) {
+        if (!patch0052::IsTwoPlayer())
+            return Orig(keeper);
+        const void* wire = pylon::CapturedWireFromKeeper(reinterpret_cast<uintptr_t>(keeper));
+        if (!pylon::IsScriptedWire(wire))
+            return Orig(keeper);
+
+        void* rider = *static_cast<void**>(keeper);
+        if (!patch0009::IsP2(rider))
+            return Orig(keeper);
+
+        if (!pylon::sLoggedDeathAreaProtection) {
+            pylon::sLoggedDeathAreaProtection = true;
+            Logging.Log("[OCoop] Spark Pylon blocked native death-area recovery rider=P2");
+        }
+        return false;
+    }
+};
+
+HOOK_DEFINE_TRAMPOLINE(Patch0053PylonPreMovementRecovery) {
+    static bool Callback(const void* checker, void** area, const void* position) {
+        const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+        if (caller != reinterpret_cast<uintptr_t>(exl::util::modules::GetTargetOffset(
+                          PatchOffsets::PreMovementCheckRecoveryAreaReturn)) ||
+            !patch0052::IsTwoPlayer())
+            return Orig(checker, area, position);
+
+        void* rider = *static_cast<void* const*>(checker);
+        if (!pylon::IsScriptedWire(pylon::CapturedWire(rider)) || !patch0009::IsP2(rider))
+            return Orig(checker, area, position);
+
+        // This caller only reads the boolean. True skips both cancelHack
+        // and forceRecovery and returns without reading the area output.
+        if (!pylon::sLoggedPreMovementProtection) {
+            pylon::sLoggedPreMovementProtection = true;
+            Logging.Log("[OCoop] Spark Pylon blocked pre-movement recovery rider=P2");
+        }
+        return true;
+    }
+};
+
+HOOK_DEFINE_TRAMPOLINE(Patch0053PylonTraceCapture) {
+    static bool Callback(void* keeper, void* captureSensor, void* parentSensor, void* actor) {
+        const bool captured = Orig(keeper, captureSensor, parentSensor, actor);
+        if (captured && patch0052::IsTwoPlayer()) {
+            const void* wire = pylon::CapturedWireFromKeeper(reinterpret_cast<uintptr_t>(keeper));
+            if (wire) {
+                const bool p2 = patch0009::IsP2(*static_cast<void**>(keeper));
+                Logging.Log("[OCoop] Spark Pylon captured rider=%s scripted=%d",
+                            p2 ? "P2" : "P1", static_cast<int>(pylon::IsScriptedWire(wire)));
+            }
+        }
+        return captured;
+    }
+};
+
+HOOK_DEFINE_TRAMPOLINE(Patch0053PylonTraceCaptureEnd) {
+    static bool Callback(void* keeper, const void* params) {
+        const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+        const bool wire = patch0052::IsTwoPlayer() &&
+            pylon::CapturedWireFromKeeper(reinterpret_cast<uintptr_t>(keeper));
+        const bool p2 = wire && patch0009::IsP2(*static_cast<void**>(keeper));
+        const bool ended = Orig(keeper, params);
+        if (wire)
+            Logging.Log("[OCoop] Spark Pylon capture end rider=%s nativeCaller=0x%lx result=%d",
+                        p2 ? "P2" : "P1", pylon::CallerOffset(caller), static_cast<int>(ended));
+        return ended;
+    }
+};
+
+HOOK_DEFINE_TRAMPOLINE(Patch0053PylonTraceAbyss) {
+    static void Callback(void* actor, const void* nerve) {
+        const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+        if (nerve == OcoopFn<const void*>(PatchOffsets::NrvPlayerActorHakoniwaAbyss) &&
+            pylon::sAbyssTraceCount < 8 && patch0052::IsTwoPlayer() &&
+            patch0009::IsP2(actor)) {
+            auto isActiveDemo = OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsActiveDemoActor);
+            const void* wire = pylon::CapturedWire(actor);
+            ++pylon::sAbyssTraceCount;
+            Logging.Log("[OCoop] Spark Pylon trace P2 Abyss nativeCaller=0x%lx wire=%p demo=%d",
+                        pylon::CallerOffset(caller), wire, static_cast<int>(isActiveDemo(actor)));
+        }
+        Orig(actor, nerve);
+    }
+};
+
+HOOK_DEFINE_TRAMPOLINE(Patch0053PylonExit) {
+    static void Callback(void* wire) {
+        if (!patch0052::IsTwoPlayer()) {
+            Orig(wire);
+            return;
+        }
+
+        auto getSceneInfo = OcoopFn<const void* (*)(const void*)>(
+            PatchOffsets::AlGetActorSceneInfo);
+        const auto* sceneInfo = static_cast<const unsigned char*>(getSceneInfo(wire));
+        if (!IsPtr8(reinterpret_cast<uintptr_t>(sceneInfo))) {
+            Orig(wire);
+            return;
+        }
+        // al::getPlayerActor(LiveActor*, index) loads this same holder.
+        const void* holder = *reinterpret_cast<const void* const*>(sceneInfo + 0x58);
+        auto getPlayer = OcoopFn<const void* (*)(const void*, int)>(
+            PatchOffsets::AlGetPlayerActorFromHolder);
+        const void* p2 = IsPtr8(reinterpret_cast<uintptr_t>(holder))
+            ? getPlayer(holder, 1) : nullptr;
+        if (pylon::CapturedWire(p2) != wire) {
+            Orig(wire);
+            return;
+        }
+
+        auto makeAccessor = OcoopFn<void (*)(void*, const void*)>(
+            PatchOffsets::GameDataHolderAccessorCtor);
+        const void* gameData = nullptr;
+        makeAccessor(&gameData, static_cast<const unsigned char*>(wire) + 0x20);
+        if (!IsPtr8(reinterpret_cast<uintptr_t>(gameData))) {
+            Orig(wire);
+            return;
+        }
+
+        const bool alreadyRequested = pylon::StageChangeRequested(gameData);
+        const pylon::ScopedRiderLookup useP2(holder);
+        Orig(wire);
+        if (!alreadyRequested && pylon::StageChangeRequested(gameData)) {
+            pylon::sPendingExit = {gameData, holder, p2};
+            Logging.Log("[OCoop] Spark Pylon requested native stage change rider=P2");
+        }
+    }
+};
+#endif
 
 #if PATCH_0047_ENABLED
 HOOK_DEFINE_TRAMPOLINE(Patch0047PictureReceiveMsg) {
@@ -3899,8 +4496,11 @@ HOOK_DEFINE_TRAMPOLINE(Patch0047PictureReceiveMsg) {
         const unsigned long ret = Orig(self, msg, other, target);
         patch0017::sQueryIdx = prev;
 
+        // P0 #3: do not hide unrecognized painting senders. An idx=-1
+        // bind is exactly the missing-ownership evidence we need for Lake.
+        // Bound logging even if a failed bind is retried every frame.
         const char* kind = nullptr;
-        if (idx >= 0 && IsPtr8((uintptr_t)msg)) {
+        if (IsPtr8((uintptr_t)msg)) {
             auto isBindStart =
                 OcoopFn<bool (*)(const void*)>(PatchOffsets::AlIsMsgBindStart);
             auto isBindInit =
@@ -3910,10 +4510,10 @@ HOOK_DEFINE_TRAMPOLINE(Patch0047PictureReceiveMsg) {
         }
         if (kind) {
             static unsigned sLogged = 0;
-            if (sLogged < 16) {
-                sLogged++;
-                Logging.Log("[OCoop] PATCH-0047 picture %s idx=%d ret=%d self=%p",
-                            kind, idx, (int)(ret & 1), self);
+            if (sLogged < 32) {
+                ++sLogged;
+                Logging.Log("[OCoop] PATCH-0047 P0-STORY picture %s idx=%d accepted=%d other=%p self=%p count=%u",
+                            kind, idx, (int)(ret & 1), other, self, sLogged);
             }
         }
         return ret;
@@ -3993,8 +4593,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0017DokanReceiveMsg) {
  * @ 0x971fd8. self (x0) = ActorCameraTarget*, out (x1) = Vector3f* the caller
  * fills with the tracked actor's world position. Both are pointers — no float
  * regs at this boundary. After Orig, out holds the tracked player's pos; we
- * nudge its x/z to the midpoint with the partner so the follow camera centers
- * between the two players (and every downstream consumer sees the midpoint). */
+ * center the horizontal target between the players and apply a bounded
+ * vertical adjustment for players at different heights. */
 HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
     static void Callback(void* self, float* out) {
         Orig(self, out);
@@ -4026,6 +4626,15 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
         }
         if (!trackedIsPlayer || !IsPtr8((uintptr_t)partner))
             return;
+
+        const auto isActiveDemo =
+            OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsActiveDemoActor);
+        if (isActiveDemo((const void*)tracked) || isActiveDemo(partner)) {
+#if PATCH_0008_ENABLED
+            patch0008::Reset();
+#endif
+            return;
+        }
 
         const float* tp = getTrans((const void*)tracked);
         const float* pp = getTrans((const void*)partner);
@@ -4087,7 +4696,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
                             (void*)tracked, partner);
             }
 #if PATCH_0008_ENABLED
-            patch0008::ObserveHorizontalSeparation(0.0f, 0.0f);
+            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f, false);
 #endif
             return;
         }
@@ -4166,7 +4775,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
             out[1] = pp[1];
             out[2] = pp[2];
 #if PATCH_0008_ENABLED
-            patch0008::ObserveHorizontalSeparation(0.0f, 0.0f);
+            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f, false);
 #endif
             if (fallingHandoff && !loggedEarlyHandoff) {
                 loggedEarlyHandoff = true;
@@ -4255,7 +4864,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
 
         if (p2FallingExclusion || p2TerminalExclusion || p2RecoveryExclusion) {
 #if PATCH_0008_ENABLED
-            patch0008::ObserveHorizontalSeparation(0.0f, 0.0f);
+            patch0008::ObserveSeparation(0.0f, 0.0f, 0.0f, false);
 #endif
             if (p2FallingExclusion && !loggedP2FallExclusion) {
                 loggedP2FallExclusion = true;
@@ -4279,10 +4888,16 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
 #endif
 #endif
 
-        float dx = (pp[0] - tp[0]) * 0.5f;
-        float dz = (pp[2] - tp[2]) * 0.5f;
-        out[0] += dx;   // x toward midpoint
-        out[2] += dz;   // z toward midpoint (y left as Orig set it)
+        const float dx = (pp[0] - tp[0]) * 0.5f;
+        const float dz = (pp[2] - tp[2]) * 0.5f;
+        float heightOffset = (pp[1] - tp[1]) * 0.25f;
+        if (heightOffset < -300.0f)
+            heightOffset = -300.0f;
+        else if (heightOffset > 300.0f)
+            heightOffset = 300.0f;
+        out[0] += dx;
+        out[1] += heightOffset;
+        out[2] += dz;
 #if OCOOP_DEV_DIAGNOSTICS
 #include "program/diagnostics_private/fragment_067.inc"
 #include "program/diagnostics_private/fragment_069.inc"
@@ -4293,7 +4908,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0004CoopCameraMidpoint) {
 #if PATCH_0008_ENABLED
         /* Feed only scalar, current-frame separation to the final-pose hook.
          * No actor pointer survives this callback. */
-        patch0008::ObserveHorizontalSeparation(pp[0] - tp[0], pp[2] - tp[2]);
+        patch0008::ObserveSeparation(pp[0] - tp[0], pp[1] - tp[1], pp[2] - tp[2]);
 #endif
 
         static unsigned calls = 0;
@@ -4331,7 +4946,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0025CameraStickP2) {
         uintptr_t info = (uintptr_t)getPlayerInfo(p2);
         if (!IsPtr8(info))
             return;
-        uintptr_t input = *(uintptr_t*)(info + 0x80);  /* PlayerInfo::mInput */
+        uintptr_t input = *(uintptr_t*)(info + PatchOffsets::PlayerInfoInput);
         if (!IsPtr8(input))
             return;
         auto getStickCameraRaw =
@@ -4392,6 +5007,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0008CoopCameraFinalZoom) {
         const float diagNativeEye[3] = {eye[0], eye[1], eye[2]};
 #endif
         patch0008::ScaleFinalPose(eye, at, self);
+        patch0008::CaptureView(eye, at, reinterpret_cast<const float*>(out + 0x50), self);
 #if OCOOP_DEV_DIAGNOSTICS
 #include "program/diagnostics_private/fragment_075.inc"
 #endif
@@ -4417,6 +5033,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
         uintptr_t player = (uintptr_t)self;
         if (!IsPtr8(player))
             return;
+
+        p0debug::Tick(self);
 
 #if PATCH_0010_ENABLED
         /* PATCH-0010 uses this existing live per-player control path as its
@@ -4494,19 +5112,17 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             }
         }
 
-        static unsigned sHold[4] = {0, 0, 0, 0};
-        static unsigned sCooldown[4] = {0, 0, 0, 0};
-#if PATCH_0043_ENABLED
-        static bool sDestinationBlocked[4] = {false, false, false, false};
-#endif
-        /* v2 movement tracking: position VALUES (not pointers) cached per
-         * holder index; EMA of per-frame speed, ~1.2 s half-life. */
-        static float sPrev[4][3];
-        static bool sPrevValid[4] = {false, false, false, false};
-        static float sSpeedEma[4] = {0, 0, 0, 0};
         if (selfIdx < 0 || selfIdx >= 4 || partnerIdx < 0 || partnerIdx >= 4 ||
             !IsPtr8((uintptr_t)partner))
             return;
+
+        auto& state = separationbubble::sPlayers[selfIdx];
+        auto& partnerState = separationbubble::sPlayers[partnerIdx];
+#if PATCH_0008_ENABLED
+        const bool viewFresh = patch0008::sViewTicks > 0;
+        if (viewFresh)
+            --patch0008::sViewTicks;
+#endif
 
 #if OCOOP_DEV_DIAGNOSTICS
 #include "program/diagnostics_private/fragment_037.inc"
@@ -4515,8 +5131,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
         const auto& settings = ocoop::config::Get();
         const unsigned holdFrames = ocoop::config::BubbleHoldFrames();
         const unsigned cooldownFrames = ocoop::config::BubbleCooldownFrames();
-        if (sCooldown[selfIdx] > 0)
-            sCooldown[selfIdx]--;
+        if (state.cooldown > 0)
+            state.cooldown--;
 
         uintptr_t hackKeeper = *(uintptr_t*)(player + 0x208);
         uintptr_t partnerHackKeeper = *(uintptr_t*)((uintptr_t)partner + 0x208);
@@ -4527,16 +5143,30 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
 #include "program/diagnostics_private/fragment_038.inc"
 #endif
 
-        /* Guards mirroring the native checkDeathArea preconditions: neither
-         * player dead or already in the Abyss state. */
-        if (isDeadStatus((const void*)player) || isDeadStatus(partner) ||
+        // Leave scripted demos in control and avoid starting a second recovery
+        // when either player is dead or already in the native Abyss state.
+        const auto isActiveDemo =
+            OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsActiveDemoActor);
+#if OCOOP_GAME == 130
+        // An ElectricWire is a single capture and can intentionally move its
+        // rider out of range. Don't cancel it or bubble either player for
+        // separation while the wire is in control.
+        const bool wireTravel = pylon::CapturedWire(self) || pylon::CapturedWire(partner);
+#else
+        constexpr bool wireTravel = false;
+#endif
+        if (wireTravel || isActiveDemo(self) || isActiveDemo(partner) ||
+            isDeadStatus(self) || isDeadStatus(partner) ||
             isNerve((const void*)player, nrvAbyss) || isNerve(partner, nrvAbyss)) {
-            sHold[selfIdx] = 0;
+            state.grace.frames = 0;
+            state.outsideGrace.frames = 0;
+            state.hasPreviousPosition = false;
+            state.speed = 0.0f;
 #if PATCH_0045_ENABLED
             distancebubblecamera::CancelCapturePending(selfIdx);
 #endif
 #if PATCH_0043_ENABLED
-            sDestinationBlocked[selfIdx] = false;
+            state.destinationBlocked = false;
 #endif
             return;
         }
@@ -4545,23 +5175,26 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
 
         const float* sp = getTrans((const void*)player);
         const float* pp = getTrans(partner);
-        if (sp == nullptr || pp == nullptr)
+        if (sp == nullptr || pp == nullptr) {
+            state.grace.frames = 0;
+            state.outsideGrace.frames = 0;
             return;
+        }
 
         /* Update own speed EMA every frame (units/frame; running ~10-25).
          * Skip teleport artifacts (bubble placement, scene warp). */
-        if (sPrevValid[selfIdx]) {
-            float mx = sp[0] - sPrev[selfIdx][0];
-            float my = sp[1] - sPrev[selfIdx][1];
-            float mz = sp[2] - sPrev[selfIdx][2];
+        if (state.hasPreviousPosition) {
+            float mx = sp[0] - state.previousPosition[0];
+            float my = sp[1] - state.previousPosition[1];
+            float mz = sp[2] - state.previousPosition[2];
             float step = __builtin_sqrtf(mx * mx + my * my + mz * mz);
             if (step < 500.0f)
-                sSpeedEma[selfIdx] += (step - sSpeedEma[selfIdx]) * 0.01f;
+                state.speed += (step - state.speed) * 0.01f;
         }
-        sPrev[selfIdx][0] = sp[0];
-        sPrev[selfIdx][1] = sp[1];
-        sPrev[selfIdx][2] = sp[2];
-        sPrevValid[selfIdx] = true;
+        state.previousPosition[0] = sp[0];
+        state.previousPosition[1] = sp[1];
+        state.previousPosition[2] = sp[2];
+        state.hasPreviousPosition = true;
 
         float dx = sp[0] - pp[0], dy = sp[1] - pp[1], dz = sp[2] - pp[2];
         float dist2 = dx * dx + dy * dy + dz * dz;
@@ -4576,42 +5209,51 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             if (apart && (calls++ % 120) == 0 && logged < 60) {
                 logged++;
                 Logging.Log("[OCoop] PATCH-0006 status dist=%.0f hold=%u cooldown=%u emaSelf=%.1f emaPartner=%.1f",
-                            __builtin_sqrtf(dist2), sHold[selfIdx], sCooldown[selfIdx],
-                            sSpeedEma[selfIdx], sSpeedEma[partnerIdx]);
+                            __builtin_sqrtf(dist2), state.grace.frames, state.cooldown,
+                            state.speed, partnerState.speed);
             }
         }
 
-        if (!apart) {
-            sHold[selfIdx] = 0;
-#if PATCH_0045_ENABLED
-            distancebubblecamera::CancelCapturePending(selfIdx);
-#endif
-#if PATCH_0043_ENABLED
-            sDestinationBlocked[selfIdx] = false;
-#endif
-            return;
+        // The earlier recovery path only runs when the shared follow camera
+        // clearly sees one player and the other is entirely outside its bounds.
+        bool selfOutside = false;
+        bool partnerOutside = false;
+#if PATCH_0008_ENABLED
+        const float minScreenDistance = settings.bubbleDistance * 0.45f;
+        if (viewFresh && dist2 > minScreenDistance * minScreenDistance &&
+            selfHack == 0 && partnerHack == 0) {
+            using ocoop::camera::Visibility;
+            const auto selfView = patch0008::sView.Classify({sp[0], sp[1], sp[2]});
+            const auto partnerView = patch0008::sView.Classify({pp[0], pp[1], pp[2]});
+            selfOutside = selfView == Visibility::Outside && partnerView == Visibility::Inside;
+            partnerOutside = partnerView == Visibility::Outside && selfView == Visibility::Inside;
         }
-        /* v2 symmetric selector: the clearly-IDLE player bubbles (speed EMA
-         * less than half the partner's). Ambiguous -> P2 fires (v1 fallback).
-         * The two branches are mutually exclusive, so exactly one player can
-         * fire per episode. */
-        bool selfClearlyIdle = sSpeedEma[selfIdx] * 2.0f < sSpeedEma[partnerIdx];
-        bool partnerClearlyIdle = sSpeedEma[partnerIdx] * 2.0f < sSpeedEma[selfIdx];
-        bool iAmTheBubbler = (selfIdx == 0) ? selfClearlyIdle : !partnerClearlyIdle;
-        if (!iAmTheBubbler || sCooldown[selfIdx] > 0) {
+#endif
+        const bool selfIdle = state.speed * 2.0f < partnerState.speed;
+        const bool partnerIdle = partnerState.speed * 2.0f < state.speed;
+        const bool electedByDistance = selfIdx == 0 ? selfIdle : !partnerIdle;
+        // When the camera identifies the lagging player, don't bubble the
+        // visible teammate just because their movement happens to be slower.
+        const bool distanceEligible = apart && (selfOutside || (!partnerOutside && electedByDistance));
+        const bool ready = state.cooldown == 0;
+        constexpr unsigned outsideGraceFrames = 27; // 450 ms at Odyssey's 60 Hz.
+        const bool distanceElapsed = state.grace.Tick(ready && distanceEligible, holdFrames);
+        const bool outsideElapsed = state.outsideGrace.Tick(ready && selfOutside, outsideGraceFrames);
+        const bool eligible = ready && (distanceEligible || selfOutside);
+        if (!eligible) {
 #if PATCH_0045_ENABLED
             distancebubblecamera::CancelCapturePending(selfIdx);
 #endif
 #if PATCH_0043_ENABLED
-            sDestinationBlocked[selfIdx] = false;
+            state.destinationBlocked = false;
 #endif
             return;
         }
 #if PATCH_0043_ENABLED
         const bubblesafety::DestinationState destination =
             bubblesafety::Evaluate(partner);
-        if (!destination.IsSafe()) {
-            sHold[selfIdx] = 0;
+        if (!destination.IsSafe() ||
+            patch0009::IsTerminalPartner(partner)) {
 #if PATCH_0045_ENABLED
             /* The confirmed disturbing shift begins during rocket exit, before
              * FIRE. Start priority only from the unambiguous capture signal and
@@ -4619,8 +5261,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             if (destination.captured)
                 distancebubblecamera::BeginCapturePending(selfIdx);
 #endif
-            if (!sDestinationBlocked[selfIdx]) {
-                sDestinationBlocked[selfIdx] = true;
+            if (!state.destinationBlocked) {
+                state.destinationBlocked = true;
                 Logging.Log("[OCoop] PATCH-0043 trigger HELD idx=%d partner=%p ground=%d water=%d capture=%d keeper=%d collider=%d",
                             selfIdx, partner, destination.grounded ? 1 : 0,
                             destination.inWater ? 1 : 0,
@@ -4630,15 +5272,16 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             }
             return;
         }
-        if (sDestinationBlocked[selfIdx]) {
-            sDestinationBlocked[selfIdx] = false;
-            Logging.Log("[OCoop] PATCH-0043 trigger gate OPEN idx=%d partner=%p",
-                        selfIdx, partner);
+        if (state.destinationBlocked) {
+            state.destinationBlocked = false;
+            Logging.Log("[OCoop] PATCH-0043 trigger gate OPEN idx=%d partner=%p grace=%u/%u",
+                        selfIdx, partner, state.grace.frames, holdFrames);
         }
 #endif
-        if (++sHold[selfIdx] < holdFrames)
+        if (!distanceElapsed && !outsideElapsed)
             return;
-        sHold[selfIdx] = 0;
+        state.grace.frames = 0;
+        state.outsideGrace.frames = 0;
 
          
         if (selfHack != 0) {
@@ -4650,7 +5293,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             bool ok = IsPtr8(hackKeeper) ? cancelHackArea((void*)hackKeeper) : false;
             Logging.Log("[OCoop] PATCH-0006 v3 unhack-for-bubble idx=%d dist=%.0f ok=%d",
                         selfIdx, __builtin_sqrtf(dist2), ok ? 1 : 0);
-            sCooldown[selfIdx] = ok ? 120 : cooldownFrames;
+            state.cooldown = ok ? 120 : cooldownFrames;
             return;
         }
 
@@ -4663,7 +5306,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             distancebubblecamera::CancelCapturePending(selfIdx);
 #endif
             Logging.Log("[OCoop] PATCH-0006 skip: recovery not valid (recovery=%p)", (void*)recovery);
-            sCooldown[selfIdx] = cooldownFrames;
+            state.cooldown = cooldownFrames;
             return;
         }
 
@@ -4680,21 +5323,24 @@ HOOK_DEFINE_TRAMPOLINE(Patch0006OutOfViewBubble) {
             Logging.Log("[OCoop] PATCH-0006 skip: bad player fields cap=%p bind=%p carry=%p equip=%p abyss=%p",
                         (void*)hackCap, (void*)bindKeeper, (void*)carryKeeper,
                         (void*)equipUser, (void*)stateAbyss);
-            sCooldown[selfIdx] = cooldownFrames;
+            state.cooldown = cooldownFrames;
             return;
         }
 
         auto forceRecovery = OcoopFn<void (*)(void*, void*, void*, void*, void*, void*)>(
             PatchOffsets::PlayerForceRecoveryHelper);
-        Logging.Log("[OCoop] PATCH-0006 FIRE idx=%d dist=%.0f emaSelf=%.1f emaPartner=%.1f player=%p partner=%p",
-                    selfIdx, __builtin_sqrtf(dist2), sSpeedEma[selfIdx], sSpeedEma[partnerIdx],
+        Logging.Log("[OCoop] PATCH-0006 FIRE idx=%d reason=%s dist=%.0f emaSelf=%.1f emaPartner=%.1f player=%p partner=%p",
+                    selfIdx, outsideElapsed ? "outside-frame" : "distance",
+                    __builtin_sqrtf(dist2), state.speed, partnerState.speed,
                     (void*)player, partner);
 #if PATCH_0045_ENABLED
         distancebubblecamera::Arm(selfIdx);
 #endif
         forceRecovery((void*)player, (void*)hackCap, (void*)carryKeeper,
                       (void*)bindKeeper, (void*)equipUser, (void*)stateAbyss);
-        sCooldown[selfIdx] = cooldownFrames;
+        state.cooldown = cooldownFrames;
+        partnerState.grace.frames = 0;
+        partnerState.outsideGrace.frames = 0;
     }
 };
 #endif
@@ -4966,8 +5612,14 @@ HOOK_DEFINE_TRAMPOLINE(Patch0009MoonHealSystemMax) {
         Orig(holder);
         const uintptr_t base = (uintptr_t)exl::util::modules::GetTargetOffset(0);
         const uintptr_t lrNso = (lr >= base) ? lr - base : 0;
-        const bool mainModule = lrNso > 0 && lrNso < 0xbef048UL;
+        const bool mainModule = exl::util::GetMainModuleInfo().m_Text.InRange(lr);
+#if OCOOP_GAME == 130
+        // The 1.0.0 in-scene return address is not portable. Keep the heal but
+        // leave the scene HUD alone when a native caller's lifetime is unknown.
+        const bool sceneAlive = !mainModule;
+#else
         const bool sceneAlive = !mainModule || lrNso == 0x4dc6b4;
+#endif
         if (!sceneAlive) {
             Logging.Log("[OCoop] PATCH-0009 moon-heal system-max sequence-level lr_nso=0x%lx hud-skip",
                         (unsigned long)lrNso);
@@ -4990,12 +5642,41 @@ HOOK_DEFINE_TRAMPOLINE(Patch0009MoonHealSystemMax) {
  * native P1 branch does exactly this, run 20260711-201724). */
 HOOK_DEFINE_TRAMPOLINE(Patch0011P2AreaChangeStage) {
     static unsigned long Callback(void* holder, void* scene) {
+#if OCOOP_GAME == 130
+        if (pylon::sPendingExit.gameData == holder && pylon::sPendingExit.rider) {
+            const auto pending = pylon::sPendingExit;
+            pylon::sPendingExit = {};
+            auto getScenePlayerHolder = OcoopFn<const void* (*)(const void*)>(
+                PatchOffsets::AlGetScenePlayerHolder);
+            auto getPlayer = OcoopFn<const void* (*)(const void*, int)>(
+                PatchOffsets::AlGetPlayerActorFromHolder);
+            if (patch0052::IsTwoPlayer() && IsPtr8(reinterpret_cast<uintptr_t>(scene)) &&
+                pylon::StageChangeRequested(holder) &&
+                getScenePlayerHolder(scene) == pending.playerHolder &&
+                getPlayer(pending.playerHolder, 1) == pending.rider) {
+                const pylon::ScopedRiderLookup useP2(pending.playerHolder);
+                const auto ret = Orig(holder, scene);
+                Logging.Log("[OCoop] Spark Pylon native stage handoff rider=P2 result=%lu", ret);
+                return ret;
+            }
+        }
+#endif
         unsigned long ret = Orig(holder, scene);
         uintptr_t h = (uintptr_t)holder;
         if (!IsPtr8(h) || !IsPtr8((uintptr_t)scene))
             return ret;
-        if (*(char*)(h + 0x49) != 0)  /* change already requested this frame */
+        if (*(char*)(h + 0x49) != 0) { /* change already requested this frame */
+            // P0 #2/#3: differentiate a native stage-change request from
+            // the additional P2 area-poll path below. Existing hook only
+            // logged successful P2 requests, hiding native P1 transitions.
+            static unsigned sNativeChangesLogged = 0;
+            if (sNativeChangesLogged < 16) {
+                ++sNativeChangesLogged;
+                Logging.Log("[OCoop] PATCH-0011 P0-STORY native stage-change requested ret=%lu scene=%p count=%u",
+                            ret, scene, sNativeChangesLogged);
+            }
             return ret;
+        }
         auto getScenePlayerHolder = OcoopFn<void* (*)(const void*)>(PatchOffsets::AlGetScenePlayerHolder);
         auto getPlayerActorAt = OcoopFn<void* (*)(const void*, int)>(PatchOffsets::AlGetPlayerActorFromHolder);
         auto isInChangeStageArea = OcoopFn<bool (*)(const void*, const void*)>(PatchOffsets::RsIsInChangeStageArea);
@@ -5020,7 +5701,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0011P2AreaChangeStage) {
         static unsigned n = 0;
         if (n < 8) {
             n++;
-            Logging.Log("[OCoop] PATCH-0011 p2 area-enter -> stage change requested (p2=%p flag=%d)",
+            Logging.Log("[OCoop] PATCH-0011 P0-STORY p2 area-enter -> stage change requested (p2=%p flag=%d)",
                         p2, (int)*(char*)(h + 0x49));
         }
         return ret;
@@ -5173,7 +5854,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0013CapReturnOwner) {
                         reinterpret_cast<void* (*)(const void*)>(*(uintptr_t*)(vt + 0x1a8));
                     uintptr_t info = (uintptr_t)getPlayerInfo((const void*)player);
                     if (IsPtr8(info)) {
-                        uintptr_t arranger = *(uintptr_t*)(info + 0x78);
+                        uintptr_t arranger = *(uintptr_t*)(
+                            info + PatchOffsets::PlayerInfoFormSensorCollisionArranger);
                         if (IsPtr8(arranger)) {
                             auto getHeadPos =
                                 OcoopFn<const float* (*)(const void*)>(PatchOffsets::ArrangerGetHeadPos);
@@ -5199,6 +5881,8 @@ HOOK_DEFINE_TRAMPOLINE(Patch0013CapReturnOwner) {
  * the pad-trigger family would happily index. */
 HOOK_DEFINE_TRAMPOLINE(Patch0048P2MapOpenTrigger) {
     static bool Callback(const void* sceneObjHolder) {
+        if (p0debug::InterceptMapOpen())
+            return false; // Minus belongs to the dev lab while enabled.
         if (Orig(sceneObjHolder))
             return true;
 
@@ -5209,10 +5893,19 @@ HOOK_DEFINE_TRAMPOLINE(Patch0048P2MapOpenTrigger) {
         if (p1Port < 0 || p2Port < 0)
             return false;
 
+#if OCOOP_GAME == 130
+        /* 1.3.0's helper takes (holder, bool); rs::isTriggerMapOpen tail-calls
+         * it with w1=1 (0x51e694..0x51e6a0), so mirror that native call. */
+        auto dualPortTrigger =
+            OcoopFn<bool (*)(const void*, bool)>(PatchOffsets::RsMapOpenDualPortTrigger);
+        if (!dualPortTrigger(sceneObjHolder, true))
+            return false;
+#else
         auto dualPortTrigger =
             OcoopFn<bool (*)()>(PatchOffsets::RsMapOpenDualPortTrigger);
         if (!dualPortTrigger())
             return false;
+#endif
 
         static unsigned logged = 0;
         if (logged < 20) {
@@ -5619,9 +6312,13 @@ HOOK_DEFINE_TRAMPOLINE(Patch0052RequestModeAndRestart) {
         }
 
         patch0052::sTwoPlayer = enabled;
+#if OCOOP_GAME == 130
+        patch0052::RestartStageV130(holder);
+#else
         auto restartStage =
             OcoopFn<void (*)(void*)>(PatchOffsets::GameDataRestartStage);
         restartStage(holder);
+#endif
         patch0052::sKillPending = true;
         Logging.Log("[OCoop] PATCH-0052 request call=%u mode=%s nativeApplied=0 restartReturned=1 killPending=1",
                     patch0052::sRequests, enabled ? "2P" : "1P");
@@ -5658,6 +6355,7 @@ HOOK_DEFINE_TRAMPOLINE(Patch0052SequenceKillSceneForRestart) {
         }
 
         const unsigned aliveBefore = *((unsigned char*)scene + 0x28);
+        p0debug::DetachForSceneReset();
         auto killStageScene =
             OcoopFn<void (*)(void*)>(PatchOffsets::StageSceneKill);
         if (aliveBefore != 0)
@@ -5671,11 +6369,156 @@ HOOK_DEFINE_TRAMPOLINE(Patch0052SequenceKillSceneForRestart) {
 };
 #endif
 
+#if OCOOP_GAME == 130
+namespace guide {
+struct LayoutMessages {
+    char16_t text[ocoop::guide::kMaxMessageUnits + 1];
+    unsigned fields = 0;
+};
+
+static std::atomic<uintptr_t> sLayoutThread{0};
+static LayoutMessages* sMessages = nullptr;
+
+static uintptr_t CurrentThread() {
+    uintptr_t tls;
+    asm("mrs %0, tpidrro_el0" : "=r"(tls));
+    return tls;
+}
+
+class ScopedLayoutMessages {
+public:
+    explicit ScopedLayoutMessages(LayoutMessages& messages) {
+        uintptr_t free = 0;
+        mActive = sLayoutThread.compare_exchange_strong(free, CurrentThread(),
+                                                        std::memory_order_acquire);
+        if (mActive)
+            sMessages = &messages;
+    }
+
+    ~ScopedLayoutMessages() {
+        if (mActive) {
+            sMessages = nullptr;
+            sLayoutThread.store(0, std::memory_order_release);
+        }
+    }
+
+    ScopedLayoutMessages(const ScopedLayoutMessages&) = delete;
+    ScopedLayoutMessages& operator=(const ScopedLayoutMessages&) = delete;
+
+private:
+    bool mActive = false;
+};
+} // namespace guide
+
+HOOK_DEFINE_INLINE(ReplaceCoopGuideText) {
+    static void Callback(exl::hook::InlineCtx* ctx) {
+        const uintptr_t thread = guide::sLayoutThread.load(std::memory_order_relaxed);
+        if (!thread || thread != guide::CurrentThread() || !guide::sMessages)
+            return;
+
+        // Native layout loading has resolved the UTF-16 text into x20 and
+        // its length into w0. The original instruction copies the length to w22.
+        const auto* original = reinterpret_cast<const char16_t*>(ctx->X[20]);
+        if (!original)
+            return;
+        auto& messages = *guide::sMessages;
+        std::size_t newLength = 0;
+        const unsigned fields = ocoop::guide::Rewrite(
+            {original, static_cast<std::size_t>(ctx->W[0])}, messages.text, newLength);
+        if (!fields)
+            return;
+        ctx->X[20] = reinterpret_cast<uintptr_t>(messages.text);
+        ctx->W[0] = static_cast<uint32_t>(newLength);
+        messages.fields |= fields;
+    }
+};
+
+// Boot and TitleMenuScene each construct BootLoading. Hide the first copy
+// only, leaving the title background and both native state machines active.
+HOOK_DEFINE_TRAMPOLINE(ControllerGuideLayoutInit) {
+    static void Callback(void* actor, const void* init, const char* archive, const char* suffix) {
+        if (archive && std::strcmp(archive, "ControllerGuideMulti") == 0) {
+            guide::LayoutMessages messages;
+            const guide::ScopedLayoutMessages scope(messages);
+            Orig(actor, init, archive, suffix);
+            Logging.Log("[OCoop] ControllerGuideMulti English fields=0x%02x", messages.fields);
+            return;
+        }
+        Orig(actor, init, archive, suffix);
+        if (!archive || std::strcmp(archive, "BootLoading") != 0 ||
+            !IsPtr8(reinterpret_cast<uintptr_t>(actor)))
+            return;
+
+        // Startup and title layout initialization can run on different threads.
+        static std::atomic<bool> bootLayoutSeen{false};
+        if (bootLayoutSeen.exchange(true, std::memory_order_relaxed))
+            return;
+
+        // This is the same IUseLayout lookup used by setPaneLocalAlpha.
+        // The resulting pointer is the root Pane on which FindPaneByName runs.
+        constexpr uintptr_t kLayoutInterface = 0x08;
+        const auto layoutInterface = reinterpret_cast<uintptr_t>(actor) + kLayoutInterface;
+        const auto interfaceTable = *reinterpret_cast<const uintptr_t*>(layoutInterface);
+        if (!IsPtr8(interfaceTable))
+            return;
+        const auto getKeeper =
+            *reinterpret_cast<uintptr_t (*const*)(uintptr_t)>(interfaceTable + 0x08);
+        const auto keeper = getKeeper(layoutInterface);
+        if (!IsPtr8(keeper))
+            return;
+        const auto inner = *reinterpret_cast<const uintptr_t*>(keeper + 0x10);
+        if (!IsPtr8(inner))
+            return;
+        const auto root = *reinterpret_cast<const uintptr_t*>(inner + 0x18);
+        constexpr uintptr_t kPaneParentOffset = 0x18;
+        if (!IsPtr8(root) || !IsPtr8(*reinterpret_cast<const uintptr_t*>(root)) ||
+            *reinterpret_cast<const uintptr_t*>(root + kPaneParentOffset) != 0) {
+            Logging.Log("[OCoop] BootLoading root pane unavailable");
+            return;
+        }
+
+        // Pane::SetVisible(false): clear only the visibility bit.
+        constexpr uintptr_t kPaneFlagsOffset = 0x58;
+        constexpr uint8_t kVisible = 0x01;
+        auto& flags = *reinterpret_cast<uint8_t*>(root + kPaneFlagsOffset);
+        flags &= static_cast<uint8_t>(~kVisible);
+        Logging.Log("[OCoop] BootLoading root pane hidden");
+    }
+};
+
+static bool MatchesUpdatedSwitchExecutable() {
+    const auto& rodata = exl::util::GetMainModuleInfo().m_Rodata;
+    // The NSO container header is not mapped. The linker build ID is also
+    // present after the GNU note name in the executable's read-only segment.
+    constexpr unsigned char expectedNote[] = {
+        'G', 'N', 'U', 0,
+        0xb4, 0x24, 0xbe, 0x15, 0x0a, 0x8e, 0x7d, 0x78,
+        0x70, 0x1c, 0xbe, 0x7a, 0x43, 0x9d, 0x9e, 0xbf,
+    };
+    if (rodata.m_Start == 0 || rodata.m_Size < sizeof(expectedNote))
+        return false;
+
+    const auto* begin = reinterpret_cast<const unsigned char*>(rodata.m_Start);
+    const auto* end = begin + rodata.m_Size;
+    return std::search(begin, end, expectedNote, expectedNote + sizeof(expectedNote)) != end;
+}
+#endif
+
 extern "C" void exl_main(void* x0, void* x1) {
+#if OCOOP_GAME == 130
+    if (!MatchesUpdatedSwitchExecutable()) {
+        Logging.Log("[OCoop] Expected main build ID b424be150a8e7d78701cbe7a439d9ebf missing from read-only data, co-op hooks skipped");
+        return;
+    }
+#endif
     exl::hook::Initialize();
     exl::patch::impl::InitPatcherImpl();
     ocoop::diagnostics::Initialize();
-    Logging.Log("[OCoop] init (OCoopMod, target 0100000000010000 v1.0.0)");
+    Logging.Log("[OCoop] init (OCoopMod, target 0100000000010000 " OCOOP_GAME_VERSION_STRING ")");
+#if OCOOP_GAME == 130
+    ControllerGuideLayoutInit::InstallAtOffset(PatchOffsets::LayoutActorInit);
+    ReplaceCoopGuideText::InstallAtOffset(PatchOffsets::LayoutResolvedMessageLength);
+#endif
 
 #if OCOOP_DEV_DIAGNOSTICS
 #include "program/diagnostics_private/fragment_080.inc"
@@ -5741,6 +6584,16 @@ extern "C" void exl_main(void* x0, void* x1) {
     Patch0017DokanReceiveMsg::InstallAtOffset(PatchOffsets::DokanReceiveMsg);
     Patch0017TryGetPlayerRedirect::InstallAtOffset(
         PatchOffsets::PlayerHolderTryGetPlayer);
+#if OCOOP_GAME == 130
+    Patch0053PylonExit::InstallAtOffset(PatchOffsets::ElectricWireExeLightningEndToMove);
+    Patch0053PylonDeathArea::InstallAtOffset(PatchOffsets::PlayerHackKeeperSendMarioDeathArea);
+    Patch0053PylonPreMovementRecovery::InstallAtOffset(PatchOffsets::PlayerAreaCheckerIsInRecovery);
+    Patch0053PylonTraceCapture::InstallAtOffset(PatchOffsets::PlayerHackKeeperSetupHack);
+    Patch0053PylonTraceCaptureEnd::InstallAtOffset(PatchOffsets::PlayerHackKeeperEndHack);
+    Patch0053PylonTraceAbyss::InstallAtOffset(PatchOffsets::AlSetNerve);
+    Logging.Log("[OCoop] Spark Pylon rider-aware exit installed");
+    Logging.Log("[OCoop] Spark Pylon Test 3: scripted rider guards and capture/recovery trace installed");
+#endif
     Logging.Log("[OCoop] PATCH-0017 v3 installed (2D valve P2 enter/exit; receiveMsg scope + shared PlayerHolder::tryGetPlayer redirect)");
 #if PATCH_0047_ENABLED
     Patch0047PictureReceiveMsg::InstallAtOffset(

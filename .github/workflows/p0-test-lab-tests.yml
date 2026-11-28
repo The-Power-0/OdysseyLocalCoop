@@ -1,0 +1,19 @@
+name: P0 Test Lab menu model tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-menu-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Compile and test menu state model
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -I patch_src/exlaunch/source tests/p0_test_lab_test.cpp -o /tmp/ocoop-p0-lab-test
+          /tmp/ocoop-p0-lab-test

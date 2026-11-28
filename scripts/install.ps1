@@ -64,7 +64,9 @@ if ([string]::IsNullOrWhiteSpace($ContentsRoot)) {
 $ContentsRoot = [IO.Path]::GetFullPath($ContentsRoot)
 $TitleRoot = Join-Path $ContentsRoot $manifest.program_id
 New-Item -ItemType Directory -Force -Path $TitleRoot | Out-Null
-$backupRoot = Join-Path $TitleRoot (".ocoop-backup\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+# Ryujinx recursively scans the title's mod directory, including hidden folders.
+$backupBase = Join-Path (Split-Path -Parent $ContentsRoot) ".ocoop-backup"
+$backupRoot = Join-Path (Join-Path $backupBase $manifest.program_id) (Get-Date -Format "yyyyMMdd-HHmmss-fffffff")
 $backupCount = 0
 
 foreach ($record in @($manifest.files)) {
@@ -89,6 +91,9 @@ foreach ($record in @($manifest.files)) {
 }
 
 Write-Host "Odyssey Local Co-op $($manifest.version) installed for $Target."
+if ($manifest.PSObject.Properties["game_version"]) {
+    Write-Host "Target Super Mario Odyssey version: $($manifest.game_version)"
+}
 Write-Host "Destination: $TitleRoot"
 if ($backupCount -gt 0) { Write-Host "Backed up $backupCount replaced file(s) under: $backupRoot" }
 if ($Target -eq "Atmosphere") { Write-Warning "Physical Switch/Atmosphere support is experimental." }

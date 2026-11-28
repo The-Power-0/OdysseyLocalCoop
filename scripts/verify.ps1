@@ -19,6 +19,8 @@ $VerifyRoot = Split-Path -Parent $ReportPath
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 
 $buildReport = Get-Content -Raw -LiteralPath (Join-Path $BuildRoot "build-report.json") | ConvertFrom-Json
+$gameVersion = [string]$buildReport.game_version
+if ($gameVersion -notin @("1.0.0", "1.4.1")) { throw "Unsupported game version in build report: $gameVersion" }
 if ($buildReport.status -ne "PASS" -or $buildReport.version -ne $ExpectedVersion -or $buildReport.program_id -ne $ProgramId -or $buildReport.exlaunch_commit -ne $ExpectedCommit -or -not $buildReport.clean_build) { throw "Build report failed release identity checks." }
 $subsdk = Join-Path $BuildRoot "subsdk9"
 $npdm = Join-Path $BuildRoot "main.npdm"
@@ -53,7 +55,7 @@ foreach ($binary in @($elf, $subsdk)) {
 }
 
 $packageReport = Get-Content -Raw -LiteralPath (Join-Path $PackageRoot "package-report.json") | ConvertFrom-Json
-if ($packageReport.status -ne "PASS" -or $packageReport.version -ne $ExpectedVersion -or $packageReport.program_id -ne $ProgramId -or $packageReport.competition_hud -ne "included" -or -not $packageReport.competition_available -or $packageReport.competition_enabled -or $packageReport.competition_hud_sha256 -ne $ExpectedHudSha256) { throw "Package report failed release identity checks." }
+if ($packageReport.status -ne "PASS" -or $packageReport.version -ne $ExpectedVersion -or $packageReport.game_version -ne $gameVersion -or $packageReport.program_id -ne $ProgramId -or $packageReport.competition_hud -ne "included" -or -not $packageReport.competition_available -or $packageReport.competition_enabled -or $packageReport.competition_hud_sha256 -ne $ExpectedHudSha256) { throw "Package report failed release identity checks." }
 $zipPath = [string]$packageReport.zip.path
 if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf) -or (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash -ne $packageReport.zip.sha256) { throw "ZIP hash does not match its package report." }
 $sidecar = Get-Content -Raw -LiteralPath "$zipPath.sha256"
@@ -68,7 +70,7 @@ $top = @(Get-ChildItem -LiteralPath $extractRoot -Directory)
 if ($top.Count -ne 1) { throw "ZIP must contain exactly one top-level package directory." }
 $expandedPackage = $top[0].FullName
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $expandedPackage "PACKAGE_MANIFEST.json") | ConvertFrom-Json
-if ($manifest.version -ne $ExpectedVersion -or $manifest.program_id -ne $ProgramId -or $manifest.exlaunch_commit -ne $ExpectedCommit -or $manifest.competition_hud -ne "included" -or -not $manifest.competition_available -or $manifest.competition_enabled -or $manifest.competition_hud_sha256 -ne $ExpectedHudSha256) { throw "Expanded package manifest failed identity checks." }
+if ($manifest.version -ne $ExpectedVersion -or $manifest.game_version -ne $gameVersion -or $manifest.program_id -ne $ProgramId -or $manifest.exlaunch_commit -ne $ExpectedCommit -or $manifest.competition_hud -ne "included" -or -not $manifest.competition_available -or $manifest.competition_enabled -or $manifest.competition_hud_sha256 -ne $ExpectedHudSha256) { throw "Expanded package manifest failed identity checks." }
 
 $checksumLines = @(Get-Content -LiteralPath (Join-Path $expandedPackage "CHECKSUMS.txt"))
 foreach ($line in $checksumLines) {
@@ -97,7 +99,7 @@ foreach ($target in @("ryujinx", "atmosphere")) {
 }
 
 $report = [ordered]@{
-    schema_version = 1; status = "PASS"; version = $ExpectedVersion; program_id = $ProgramId
+    schema_version = 1; status = "PASS"; version = $ExpectedVersion; game_version = $gameVersion; program_id = $ProgramId
     exlaunch_commit = $ExpectedCommit; release_elf_forbidden_findings = 0
     ci_workflow_pins = "PASS"; ci_equivalent_public_tree_build = "PASS"; hosted_actions_execution = "pending Gate I public staging"
     zip_sha256 = [string]$packageReport.zip.sha256; package_file_count = $expandedFiles.Count

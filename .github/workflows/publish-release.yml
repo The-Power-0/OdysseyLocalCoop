@@ -1,0 +1,41 @@
+name: Publish OdysseyTogether release
+
+on:
+  push:
+    branches: ['release/v0.1.0-alpha.6']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Build and verify Odyssey 1.4.1
+        shell: pwsh
+        run: |
+          ./scripts/build.ps1 -UseDocker -GameVersion 1.4.1
+          ./scripts/package.ps1
+          ./scripts/verify.ps1
+
+      - name: Prepare the drag-and-drop archive
+        run: python3 scripts/package-ryujinx.py
+
+      - name: Publish the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(cat VERSION)"
+          test "$GITHUB_REF_NAME" = "release/$version"
+          gh release create "$version" artifacts/release/*.zip artifacts/release/*.sha256 \
+            --target "$GITHUB_SHA" --prerelease --title "OdysseyTogether $version" \
+            --notes-file RELEASE_NOTES.md

@@ -1,0 +1,40 @@
+name: Local P0 save fixture manager tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Test capture, restore, backup, integrity checks
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "p0-fixtures"
+          $save = Join-Path $env:RUNNER_TEMP "p0-example-save"
+          New-Item -ItemType Directory -Force -Path $save | Out-Null
+          Set-Content -LiteralPath (Join-Path $save "test.dat") -Value "before"
+          ./scripts/p0-fixtures.ps1 -Action Capture -Scenario MetroBoss -SaveDir $save -FixtureRoot $root
+          Set-Content -LiteralPath (Join-Path $save "test.dat") -Value "changed"
+          ./scripts/p0-fixtures.ps1 -Action Restore -Scenario MetroBoss -SaveDir $save -FixtureRoot $root -ConfirmRestore
+          if ((Get-Content (Join-Path $save "test.dat") -Raw).Trim() -ne "before") {
+            throw "Local fixture roundtrip failed"
+          }
+          if (@(Get-ChildItem -LiteralPath $root -Directory -Filter "pre-restore-*").Count -ne 1) {
+            throw "Pre-restore backup missing"
+          }
+          $manifest = Join-Path $root "MetroBoss/manifest.json"
+          $raw = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+          $raw.files[0].sha256 = "00"
+          $raw | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifest
+          $threw = $false
+          try {
+            ./scripts/p0-fixtures.ps1 -Action Restore -Scenario MetroBoss -SaveDir $save -FixtureRoot $root -ConfirmRestore
+          } catch { $threw = $true }
+          if (-not $threw) { throw "Tampered manifest was not rejected" }

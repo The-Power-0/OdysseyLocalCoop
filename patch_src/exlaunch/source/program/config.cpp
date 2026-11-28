@@ -18,7 +18,7 @@ Settings sSettings = {
     "MarioColorLuigi", "MarioColorLuigi",
     10.0f,
     3000.0f, 1.1f, 5.0f, true,
-    false, // developer P0 Test Lab off by default
+        false, 560.0f, 0.0f, // developer P0 Test Lab off by default; top-center candidate
     true, 10, -560.0f, 260.0f, -64.0f,
     true, 3, 0.0f, 0.0f,
 };
@@ -168,6 +168,10 @@ void ParseConfigText(const char* text, size_t length, Settings* settings) {
             settings->bubbleWaterCountsAsGround = value != 0.0f;
         } else if (KeyEquals(cur, keyEnd, "debug.menu.enabled")) {
             settings->debugMenuEnabled = value != 0.0f;
+        } else if (KeyEquals(cur, keyEnd, "debug.menu.hud_x")) {
+            settings->debugHudX = value;
+        } else if (KeyEquals(cur, keyEnd, "debug.menu.hud_y")) {
+            settings->debugHudY = value;
         } else if (KeyEquals(cur, keyEnd, "competition.coin.enabled")) {
             settings->coinRaceEnabled = value != 0.0f;
         } else if (KeyEquals(cur, keyEnd, "competition.coin.target")) {
@@ -215,6 +219,8 @@ void Apply(Settings settings) {
         settings.moonRaceTarget = 1;
     if (settings.moonRaceTarget > 999)
         settings.moonRaceTarget = 999;
+    settings.debugHudX = Clamp(settings.debugHudX, 0.0f, 1000.0f);
+    settings.debugHudY = Clamp(settings.debugHudY, -200.0f, 200.0f);
     settings.competitionHudX = Clamp(settings.competitionHudX, -500.0f, 500.0f);
     settings.competitionHudY = Clamp(settings.competitionHudY, -300.0f, 300.0f);
     sSettings = settings;
@@ -236,7 +242,7 @@ void LogSettings(const char* state) {
                 state, sSettings.bubbleDistance, sSettings.bubbleHoldSeconds,
                 sSettings.bubbleCooldownSeconds,
                 sSettings.bubbleWaterCountsAsGround ? 1 : 0, kConfigPath);
-    Logging.Log("[OCoop] P0-LAB config enabled=%d (development-only; no stage/save warp)", sSettings.debugMenuEnabled ? 1 : 0);
+    Logging.Log("[OCoop] P0-LAB config enabled=%d hud=(%.0f,%.0f) (development-only; no stage/save warp)", sSettings.debugMenuEnabled ? 1 : 0, sSettings.debugHudX, sSettings.debugHudY);
     Logging.Log("[OCoop] CONFIG-0001 %s competition coin=%d/%d moon=%d/%d panel=(%.0f,%.0f)",
                 state, sSettings.coinRaceEnabled ? 1 : 0, sSettings.coinRaceTarget,
                 sSettings.moonRaceEnabled ? 1 : 0, sSettings.moonRaceTarget,

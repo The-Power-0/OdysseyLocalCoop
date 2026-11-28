@@ -29,6 +29,27 @@ jobs:
           if (@(Get-ChildItem -LiteralPath $root -Directory -Filter "pre-restore-*").Count -ne 1) {
             throw "Pre-restore backup missing"
           }
+          $test = Join-Path $env:RUNNER_TEMP "p0-disposable-save"
+          New-Item -ItemType Directory -Force -Path $test | Out-Null
+          Set-Content -LiteralPath (Join-Path $test "test.dat") -Value "disposable"
+          Set-Content -LiteralPath (Join-Path $save "test.dat") -Value "normal-untouched"
+          ./scripts/p0-fixtures.ps1 -Action PrepareTest -Scenario MetroBoss -SaveDir $save -TestSaveDir $test -FixtureRoot $root -ConfirmRestore
+          if ((Get-Content (Join-Path $test "test.dat") -Raw).Trim() -ne "before") {
+            throw "Disposable save was not restored"
+          }
+          if ((Get-Content (Join-Path $save "test.dat") -Raw).Trim() -ne "normal-untouched") {
+            throw "Normal save was modified"
+          }
+          $threw = $false
+          try {
+            ./scripts/p0-fixtures.ps1 -Action PrepareTest -Scenario MetroBoss -SaveDir $save -TestSaveDir $save -FixtureRoot $root -ConfirmRestore
+          } catch { $threw = $true }
+          if (-not $threw) { throw "Same-directory restore was not rejected" }
+          $threw = $false
+          try {
+            ./scripts/p0-fixtures.ps1 -Action PrepareTest -Scenario MetroBoss -SaveDir $save -TestSaveDir $test -FixtureRoot $root
+          } catch { $threw = $true }
+          if (-not $threw) { throw "Unconfirmed test restore was not rejected" }
           $manifest = Join-Path $root "MetroBoss/manifest.json"
           $raw = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
           $raw.files[0].sha256 = "00"

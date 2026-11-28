@@ -1,34 +1,31 @@
-# OdysseyTogether development build
+# OdysseyTogether v0.1.0-alpha.7
 
-The integrated 1.4.1 build includes the English `Local Co-op` confirmation screen and the Spark Pylon Test 3 changes. Extract its `OdysseyTogether` folder into Ryujinx's mod directory. Disable any older co-op mod and the separate `OCoop Guide` entry. The guide copy uses the game's existing layout and applies while that layout loads.
+A stability-focused prerelease for **Super Mario Odyssey 1.4.1 on Ryujinx**, using the original Switch executable. This update combines the earlier alpha.6 camera and startup improvements with the Cap Kingdom Spark Pylon fix and a built-in English full-player co-op guide.
 
-P2 completed the Cap Kingdom pylon crossing to Cascade in Ryujinx with Test 3. P1, later wires, and the English guide in the integrated executable still need gameplay checks. The release notes below apply to the published alpha.6 download.
+## What's new
 
-## OdysseyTogether v0.1.0-alpha.6
+- **Cap Kingdom Spark Pylon:** incorporates the Test 3 protection for the scripted capture and transition. A P2-led crossing successfully reached Cascade Kingdom in Ryujinx. P1-led crossings and later pylons still require gameplay regression testing. [#11](https://github.com/The-Power-0/OdysseyLocalCoop/issues/11)
+- **Integrated co-op guide:** the English confirmation screen now describes two full characters and two controllers instead of Mario/Cappy roles. The text is applied at runtime to the existing layout; no separate OCoop Guide or extracted game files are needed. The standalone patch was playtested; the integrated display still needs an in-game check. [#57](https://github.com/The-Power-0/OdysseyLocalCoop/issues/57)
+- **Shared camera and recovery:** retains earlier zoom-out, bounded vertical framing and the shorter off-screen bubble grace period when the other player is a safe anchor. The improved baseline was playtested and accepted. [#58](https://github.com/The-Power-0/OdysseyLocalCoop/issues/58)
+- **Startup:** retains the hidden Joy-Con startup guide. A brief black loading screen may still appear before the title menu.
+- Retains independent player controls, portable Ryujinx installer detection, development recovery safeguards, story diagnostics and the opt-in P0 Test Lab (off by default).
 
-The first OdysseyTogether prerelease is for **Super Mario Odyssey 1.4.1 on Ryujinx** using the original Switch game build. Start two full players on a shared screen through the pause menu. This fork builds on [Gudui’s Odyssey Local Co-op](https://github.com/Gudui/OdysseyLocalCoop) and [Colbster937’s executable compatibility work](https://github.com/colbster937/OdysseyLocalCoopPlus).
+## Installation / upgrading
 
-## Install
+1. Confirm Super Mario Odyssey **1.4.1** is installed in Ryujinx and configure two controllers.
+2. Right-click Odyssey in Ryujinx and choose **Open Mods Directory**.
+3. Disable or remove older Odyssey co-op mods, including any loose co-op `exefs` / `romfs` from test builds and the separate `OCoop Guide` entry. Back up your saves first.
+4. Extract the release ZIP into the mods directory. The result should be one `OdysseyTogether` folder containing `exefs` and `romfs`. The ZIP's SHA-256 checksum is provided separately.
+5. Launch the game, enter a stage, and select **Two Players** from the pause menu.
 
-1. In Ryujinx, confirm the game list shows **1.4.1**. Right-click Odyssey and select **Open Mods Directory**.
-2. Extract **OdysseyTogether-v0.1.0-alpha.6-smo-1.4.1-Ryujinx.zip** into that directory. You should have one **OdysseyTogether** folder containing **exefs** and **romfs**.
-3. If you installed an earlier test build, move its loose co-op `exefs` and `romfs` folders out of Odyssey’s mod directory before launch. If you used a named folder, disable that old mod instead. Keep the separate `OCoop Guide` folder if you already installed it.
-4. Configure two controllers. Launch Odyssey and choose **Two Players** from the in-game pause menu.
+## Validation and known limitations
 
-The optional [English co-op guide patcher](https://github.com/The-Power-0/OdysseyLocalCoop/blob/v0.1.0-alpha.6/scripts/patch-coop-guide.py) edits the text in your own RomFS extract. The main mod installs by extracting the ZIP.
+- [Integration PR #59](https://github.com/The-Power-0/OdysseyLocalCoop/pull/59): build/package checks, recovery-policy, Test Lab, fixture and portable installer tests passed on the integration head.
+- Gameplay evidence is specific to Ryujinx and the tested original Switch 1.4.1 build. This is not a complete campaign or physical Switch compatibility claim.
+- Avoid switching between solo and co-op after defeating Topper but before reaching Cascade. A prior test build produced an inconsistent Cap Kingdom save state when switching modes there. If the pylon fails, restore a pre-Topper backup and complete the crossing in solo before enabling co-op in Cascade.
+- P1-led and later Spark Pylon transitions, the integrated guide and additional camera/recovery edge cases remain to be verified.
+- Metro boss, Lake painting, Lost Kingdom lava and simultaneous-death issues remain open: [#2](https://github.com/The-Power-0/OdysseyLocalCoop/issues/2), [#3](https://github.com/The-Power-0/OdysseyLocalCoop/issues/3), [#4](https://github.com/The-Power-0/OdysseyLocalCoop/issues/4), [#5](https://github.com/The-Power-0/OdysseyLocalCoop/issues/5).
 
-## Included
+## Credits
 
-- The tested 1.4.1 executable check and independent player controls.
-- Shared camera improvements, including earlier zoom-out and bounded vertical framing.
-- A shorter recovery wait when the shared follow camera estimates one player is clearly out of frame and the other can provide a safe anchor.
-- A hidden Joy-Con startup guide. Loading can briefly show a black screen before the normal title menu appears.
-- Development recovery safeguards, story diagnostics and the opt-in Test Lab. The Test Lab is off by default.
-
-## Known issues
-
-The Cap Kingdom Spark Pylon can stall in co-op. For a new save, play through Topper and the pylon in one-player mode, then save in Cascade before enabling co-op. Avoid changing modes between defeating Topper and reaching Cascade. In the Startup test build, the mode switch reloaded Cap Kingdom with the defeat recorded and the fight trigger still active. That save crashed on re-entry even with the mod removed. Clearing the defeat flag on a test copy let the player fight Topper again and cross to Cascade. The published alpha.6 build has not been checked for this reproduction.
-
-Metro, Lake and Lost Kingdom fixes still need gameplay validation. This prerelease was tested in Ryujinx on the original Switch 1.4.1 executable.
-
-[Cap Kingdom #11](https://github.com/The-Power-0/OdysseyLocalCoop/issues/11) · [Metro #2](https://github.com/The-Power-0/OdysseyLocalCoop/issues/2) · [Lake #3](https://github.com/The-Power-0/OdysseyLocalCoop/issues/3) · [Lost Kingdom #4](https://github.com/The-Power-0/OdysseyLocalCoop/issues/4) · [Double falls #5](https://github.com/The-Power-0/OdysseyLocalCoop/issues/5)
+Based on [Gudui’s Odyssey Local Co-op](https://github.com/Gudui/OdysseyLocalCoop) and [Colbster937’s executable compatibility work](https://github.com/colbster937/OdysseyLocalCoopPlus). See CREDITS.md and THIRD_PARTY_NOTICES.md. Unofficial fan project; not affiliated with Nintendo.

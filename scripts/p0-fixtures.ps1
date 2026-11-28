@@ -1,12 +1,13 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Capture", "Restore", "List")]
+    [ValidateSet("Capture", "Restore", "PrepareTest", "List")]
     [string]$Action = "List",
 
-    [ValidateSet("MetroBoss", "LakePainting", "LostLava")]
+    [ValidateSet("MetroBoss", "LakePainting", "LostLava", "DoubleFall", "CapPylon")]
     [string]$Scenario,
 
     [string]$SaveDir,
+    [string]$TestSaveDir,
     [string]$FixtureRoot,
     [switch]$ConfirmRestore,
     [switch]$ReplaceFixture
@@ -54,7 +55,7 @@ if ($Action -eq "List") {
         Write-Host "No local P0 fixtures captured yet."
         exit 0
     }
-    foreach ($name in @("MetroBoss", "LakePainting", "LostLava")) {
+    foreach ($name in @("MetroBoss", "LakePainting", "LostLava", "DoubleFall", "CapPylon")) {
         $fixture = Join-Path $Root $name
         if (Test-Path -LiteralPath (Join-Path $fixture "manifest.json") -PathType Leaf) {
             Write-Host "$name : captured"
@@ -65,13 +66,54 @@ if ($Action -eq "List") {
     exit 0
 }
 
-if (-not $Scenario) { throw "Specify -Scenario MetroBoss, LakePainting, or LostLava." }
+if (-not $Scenario) { throw "Specify -Scenario MetroBoss, LakePainting, LostLava, DoubleFall, or CapPylon." }
 if (-not $SaveDir) { throw "Specify the game's exact Ryujinx save-data directory using -SaveDir." }
 
+function Test-PathOverlap {
+    param([string]$First, [string]$Second)
+    $a = [IO.Path]::GetFullPath($First).TrimEnd('\', '/')
+    $b = [IO.Path]::GetFullPath($Second).TrimEnd('\', '/')
+    $separator = [IO.Path]::DirectorySeparatorChar
+    return ($a.Equals($b, [StringComparison]::OrdinalIgnoreCase) -or
+            $a.StartsWith($b + $separator, [StringComparison]::OrdinalIgnoreCase) -or
+            $b.StartsWith($a + $separator, [StringComparison]::OrdinalIgnoreCase))
+}
+
+function Assert-PlainDirectory {
+    param([string]$Directory)
+    $item = Get-Item -LiteralPath $Directory -Force
+    if (-not $item.PSIsContainer) { throw "Not a directory: $Directory" }
+    while ($null -ne $item) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Refusing redirected or linked directory: $($item.FullName)"
+        }
+        $item = $item.Parent
+    }
+    foreach ($entry in @(Get-ChildItem -LiteralPath $Directory -Force -Recurse)) {
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Refusing redirected or linked entry: $($entry.FullName)"
+        }
+    }
+}
+
 $Save = [IO.Path]::GetFullPath($SaveDir)
+if ($Action -eq "PrepareTest") {
+    if (-not $TestSaveDir) { throw "Supply -TestSaveDir for a separate disposable Ryujinx profile." }
+    $test = [IO.Path]::GetFullPath($TestSaveDir)
+    if (Test-PathOverlap $Save $test) { throw "Test save and normal save must be separate directories." }
+    Assert-PlainDirectory $Save
+    Assert-PlainDirectory $test
+    if (Test-PathOverlap $Root $Save) { throw "Fixture root overlaps normal save." }
+    if (Test-PathOverlap $RepoRoot $test) { throw "Test save must be outside the repository." }
+    Write-Host "Normal save (read-only): $Save"
+    Write-Host "Disposable test save (restore target): $test"
+    $Save = $test
+}
+if (Test-PathOverlap $Root $Save) { throw "Fixture root and save directory must not overlap." }
 if (-not (Test-Path -LiteralPath $Save -PathType Container)) {
     throw "Save directory not found: $Save"
 }
+Assert-PlainDirectory $Save
 if (@(Get-Process -ErrorAction SilentlyContinue |
       Where-Object { $_.ProcessName -match '^Ryujinx' }).Count -gt 0) {
     throw "Close Ryujinx completely before modifying save data."
@@ -81,6 +123,7 @@ $Fixture = Join-Path $Root $Scenario
 $Snapshot = Join-Path $Fixture "snapshot"
 $Manifest = Join-Path $Fixture "manifest.json"
 New-Item -ItemType Directory -Path $Root -Force | Out-Null
+Assert-PlainDirectory $Root
 
 if ($Action -eq "Capture") {
     if ((Test-Path -LiteralPath $Fixture) -and -not $ReplaceFixture) {
@@ -118,7 +161,7 @@ if ($Action -eq "Capture") {
 }
 
 if (-not $ConfirmRestore) {
-    throw "Restore changes the active save. Supply -ConfirmRestore and ensure you have a backup."
+    throw "Restore changes the target save. Supply -ConfirmRestore and ensure you have a backup."
 }
 if (-not (Test-Path -LiteralPath $Snapshot -PathType Container) -or
     -not (Test-Path -LiteralPath $Manifest -PathType Leaf)) {

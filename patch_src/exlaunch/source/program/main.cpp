@@ -3496,6 +3496,7 @@ static const char* kNames[4] = {
 };
 static const int kIssue[4] = {2, 3, 4, 5};
 static const char* sMessage = "UP NEXT, A ARM";
+static bool sDecideHeld = false;
 static char16_t sNameText[48] = {};
 static char16_t sMsgText[48] = {};
 static char16_t sIssueText[12] = {};
@@ -3520,12 +3521,14 @@ static void SetTextPair(const char* a, const char* b, const char16_t* value) {
 }
 static void Render() {
     if (!IsPtr8((uintptr_t)sHud) || !sMenu.visible) return;
-    ToUtf16(sNameText, 48, kNames[sMenu.selected]);
+    const unsigned scenario = ocoop::p0lab::Scenario(sMenu);
+    const bool clear = ocoop::p0lab::SelectedAction(sMenu) == ocoop::p0lab::Action::Clear;
+    ToUtf16(sNameText, 48, kNames[scenario]);
     ToUtf16(sMsgText, 48, sMenu.armed ? "A CONFIRM!" : sMessage);
     sIssueText[0] = u'#';
-    sIssueText[1] = u'0' + kIssue[sMenu.selected];
+    sIssueText[1] = u'0' + kIssue[scenario];
     sIssueText[2] = 0;
-    SetTextPair("LblPlayer1", "LblPlayer1Sh", u"P0 TEST LAB");
+    SetTextPair("LblPlayer1", "LblPlayer1Sh", clear ? u"CLEAR MARK" : u"P0 TEST LAB");
     SetTextPair("LblPlayer2", "LblPlayer2Sh", sIssueText);
     SetTextPair("CoinP1", "CoinP1Sh", sNameText);
     SetTextPair("CoinP2", "CoinP2Sh", sMsgText);
@@ -3573,10 +3576,13 @@ static void Create(void* owner, const void* initInfo) {
 static void DetachForSceneReset() {
     sOwner = nullptr; sHud = nullptr;
     sHiddenBySceneEnd = false;
+    sDecideHeld = false;
+    sMenu = {};
     for (auto& anchor : sAnchors) anchor.valid = false;
 }
 static void End(void* owner) {
     if (owner != sOwner) return;
+    ocoop::p0lab::Apply(sMenu, Command::Cancel);
     if (IsPtr8((uintptr_t)sHud)) {
         auto kill = OcoopFn<void (*)(void*)>(PatchOffsets::AlLayoutActorKill);
         kill(sHud);
@@ -3604,8 +3610,12 @@ static bool ResolvePlayers(void* self, void** p1, void** p2) {
 static bool SafeToMove(void* p1, void* p2) {
     if (!IsPtr8((uintptr_t)p1) || !IsPtr8((uintptr_t)p2)) return false;
     if (patch0009::sP1Terminal || patch0009::sP2Terminal) return false;
-    return bubblesafety::Evaluate(p1).IsSafe() &&
-           bubblesafety::Evaluate(p2).IsSafe();
+    auto a = bubblesafety::Evaluate(p1);
+    auto b = bubblesafety::Evaluate(p2);
+    auto isActiveDemo = OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsActiveDemoActor);
+    return !isActiveDemo(p1) && !isActiveDemo(p2) &&
+           !a.captured && !b.captured && a.grounded && b.grounded &&
+           !a.inWater && !b.inWater && a.IsSafe() && b.IsSafe();
 }
 static void SetupHealthP2() {
     if (patch0009::sP2Terminal || !patch0009::sP2HealthValid) {
@@ -3616,26 +3626,43 @@ static void SetupHealthP2() {
     p2hud::NotifyHealth(1, patch0009::sP2MaxHealth);
     sMessage = "P2 HP IS 1";
     Logging.Log("[OCoop] P0-LAB issue=%d P2 private health prepared 1/%d",
-                kIssue[sMenu.selected], patch0009::sP2MaxHealth);
+                kIssue[ocoop::p0lab::Scenario(sMenu)], patch0009::sP2MaxHealth);
 }
-static void Execute(void* p1, void* p2) {
+static void Execute(void* p1, void* p2, ocoop::p0lab::Action action) {
+    const unsigned idx = ocoop::p0lab::Scenario(sMenu);
+    if (action == ocoop::p0lab::Action::Clear) {
+        sAnchors[idx] = {};
+        sMessage = "MARK CLEARED";
+        Logging.Log("[OCoop] P0-LAB issue=%d marker cleared", kIssue[idx]);
+        return;
+    }
+    if (action != ocoop::p0lab::Action::MarkOrReplay) return;
     if (!SafeToMove(p1, p2)) {
         sMessage = "NEED SAFE GROUND";
         Logging.Log("[OCoop] P0-LAB action blocked: player ungrounded/captured/terminal");
         return;
     }
-    const unsigned idx = sMenu.selected;
+    if (idx >= 2 && (!patch0009::sP2HealthValid || patch0009::sP2Terminal)) {
+        sMessage = "P2 HP UNAVAILABLE";
+        return;
+    }
     auto getTrans = OcoopFn<const float* (*)(const void*)>(
         PatchOffsets::AlGetTrans);
     auto setTrans = OcoopFn<void (*)(void*, const float*)>(
         PatchOffsets::AlSetTrans);
     Anchor& a = sAnchors[idx];
-    if (!a.valid) {
+    const bool replay = a.valid;
+    if (!replay) {
         const float* p[2] = {getTrans(p1), getTrans(p2)};
         if (!p[0] || !p[1]) { sMessage = "INVALID POSITION"; return; }
         for (int n = 0; n < 2; ++n)
-            for (int d = 0; d < 3; ++d)
-                a.pos[n][d] = p[n][d];
+            for (int d = 0; d < 3; ++d) {
+                const float v = p[n][d];
+                if (!(v >= -10000000.0f && v <= 10000000.0f)) {
+                    sMessage = "INVALID POSITION"; return;
+                }
+                a.pos[n][d] = v;
+            }
         a.valid = true;
         sMessage = "MARKED - A REPLAY";
     } else {
@@ -3646,7 +3673,7 @@ static void Execute(void* p1, void* p2) {
     }
     if (idx >= 2) SetupHealthP2();
     Logging.Log("[OCoop] P0-LAB issue=%d %s p1=(%.0f,%.0f,%.0f) p2=(%.0f,%.0f,%.0f)",
-                kIssue[idx], a.valid ? "mark/replay" : "rejected",
+                kIssue[idx], replay ? "replay" : "mark",
                 a.pos[0][0], a.pos[0][1], a.pos[0][2],
                 a.pos[1][0], a.pos[1][1], a.pos[1][2]);
 }
@@ -3662,6 +3689,14 @@ static void Tick(void* actor) {
     auto minus = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerMinus);
     auto up = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerUp);
     auto decide = OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsTriggerUiDecide);
+    const bool decideNow = decide((const void*)((uintptr_t)p1 + 0x20));
+    const bool confirm = decideNow && !sDecideHeld;
+    sDecideHeld = decideNow;
+    auto isActiveDemo = OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsActiveDemoActor);
+    if (sHiddenBySceneEnd || isActiveDemo(p1) || isActiveDemo(p2)) {
+        ocoop::p0lab::Apply(sMenu, Command::Cancel);
+        return;
+    }
     const bool toggle = minus(port);
     if (toggle) {
         ocoop::p0lab::Apply(sMenu, Command::Toggle);
@@ -3679,11 +3714,12 @@ static void Tick(void* actor) {
     if (!sMenu.visible) return;
     if (up(port)) {
         ocoop::p0lab::Apply(sMenu, Command::Next);
-        sMessage = sAnchors[sMenu.selected].valid ? "A REPLAY" : "A MARK";
+        sMessage = ocoop::p0lab::SelectedAction(sMenu) == ocoop::p0lab::Action::Clear
+            ? "A CLEAR" : (sAnchors[ocoop::p0lab::Scenario(sMenu)].valid ? "A REPLAY" : "A MARK");
         Render();
-    } else if (decide((const void*)((uintptr_t)p1 + 0x20))) {
-        if (ocoop::p0lab::Apply(sMenu, Command::Confirm).execute)
-            Execute(p1, p2);
+    } else if (confirm) {
+        const auto result = ocoop::p0lab::Apply(sMenu, Command::Confirm);
+        if (result.execute) Execute(p1, p2, result.action);
         Render();
     }
 }

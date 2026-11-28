@@ -3492,10 +3492,11 @@ struct Anchor {
 };
 static Anchor sAnchors[4] = {};
 static const char* kNames[4] = {
-    "METRO BOSS", "LAKE PAINT", "P2 LAVA 1HP", "DOUBLE FALL"
+    "2 METRO", "3 LAKE", "4 LAVA", "5 FALL"
 };
 static const int kIssue[4] = {2, 3, 4, 5};
-static const char* sMessage = "UP NEXT, A ARM";
+static const char* sMessage = "A MARK";
+static unsigned sRefreshTicks = 0;
 static bool sDecideHeld = false;
 static bool sTickReady = false;
 static bool sLoggedResolveFailure = false;
@@ -3503,7 +3504,7 @@ static bool sLoggedPortFailure = false;
 static int sLastDemoState = -1;
 static char16_t sNameText[48] = {};
 static char16_t sMsgText[48] = {};
-static char16_t sIssueText[12] = {};
+static void HideDecorations();
 
 static void ToUtf16(char16_t* out, unsigned cap, const char* str) {
     if (!out || cap == 0) return;
@@ -3526,18 +3527,14 @@ static void SetTextPair(const char* a, const char* b, const char16_t* value) {
 static void Render() {
     if (!IsPtr8((uintptr_t)sHud) || !sMenu.visible) return;
     const unsigned scenario = ocoop::p0lab::Scenario(sMenu);
-    const bool clear = ocoop::p0lab::SelectedAction(sMenu) == ocoop::p0lab::Action::Clear;
+    // Use only the two score rows: the original adjacent label panes are
+    // too narrow and overlap when filled with debug strings.
     ToUtf16(sNameText, 48, kNames[scenario]);
-    ToUtf16(sMsgText, 48, sMenu.armed ? "A CONFIRM!" : sMessage);
-    sIssueText[0] = u'#';
-    sIssueText[1] = u'0' + kIssue[scenario];
-    sIssueText[2] = 0;
+    ToUtf16(sMsgText, 48, sMenu.armed ? "CONFIRM" : sMessage);
     auto show = OcoopFn<void (*)(void*, const char*)>(PatchOffsets::LayoutShowPane);
-    const char* panes[] = {"All", "LblPlayer1", "LblPlayer1Sh", "LblPlayer2", "LblPlayer2Sh",
-                           "CoinP1", "CoinP1Sh", "CoinP2", "CoinP2Sh"};
+    const char* panes[] = {"All", "CoinP1", "CoinP1Sh", "CoinP2", "CoinP2Sh"};
     for (const char* pane : panes) show((void*)((uintptr_t)sHud + 0x08), pane);
-    SetTextPair("LblPlayer1", "LblPlayer1Sh", clear ? u"CLEAR MARK" : u"P0 TEST LAB");
-    SetTextPair("LblPlayer2", "LblPlayer2Sh", sIssueText);
+    HideDecorations();
     SetTextPair("CoinP1", "CoinP1Sh", sNameText);
     SetTextPair("CoinP2", "CoinP2Sh", sMsgText);
 }
@@ -3547,7 +3544,9 @@ static void HideDecorations() {
     void* layout = (void*)((uintptr_t)sHud + 0x08);
     const char* panes[] = {
         "IconGoldCoin", "IconPurpleCoin", "IconP1Coin", "IconP2Coin",
-        "IconMoonTotal", "MoonP1_1", "MoonP1_2", "MoonP1_3", "MoonP1_4", "MoonP1_5",
+        "IconMoonTotal", "CoinTotal", "CoinTotalSh", "PurpleTotal", "PurpleTotalSh",
+        "MoonTotal", "MoonTotalSh", "LblPlayer1", "LblPlayer1Sh", "LblPlayer2", "LblPlayer2Sh",
+        "MoonP1Count", "MoonP1CountSh", "MoonP2Count", "MoonP2CountSh", "MoonP1_1", "MoonP1_2", "MoonP1_3", "MoonP1_4", "MoonP1_5",
         "MoonP2_1", "MoonP2_2", "MoonP2_3", "MoonP2_4", "MoonP2_5"
     };
     for (const char* pane : panes) hide(layout, pane);
@@ -3561,7 +3560,7 @@ static void Create(void* owner, const void* initInfo) {
         return;
     sMenu = {};
     for (auto& anchor : sAnchors) anchor.valid = false;
-    sMessage = "UP NEXT, A ARM";
+    sMessage = "A MARK";
     sOwner = owner;
     sHud = ::operator new(0x130);
     if (!IsPtr8((uintptr_t)sHud)) { sOwner = nullptr; return; }
@@ -3573,11 +3572,11 @@ static void Create(void* owner, const void* initInfo) {
         PatchOffsets::LayoutSetPaneLocalTrans2);
     ctor(sHud, "[OCoop] Developer P0 Test Lab");
     init(sHud, initInfo, "OCoopScoreBoard", nullptr);
-    const Vec2 pos = {0.0f, 0.0f}; // known scoreboard default; diagnose visibility first
+    const auto& settings = ocoop::config::Get();
+    const Vec2 pos = {settings.debugHudX, settings.debugHudY};
     setPaneTrans((void*)((uintptr_t)sHud + 0x08), "All", pos);
-    HideDecorations();
-    Render();
     appear(sHud);
+    Render();
     sHiddenBySceneEnd = false;
     Logging.Log("[OCoop] P0-LAB created. One-scene checkpoint menu: UP cycle, A twice execute, MINUS toggle.");
 }
@@ -3589,6 +3588,7 @@ static void DetachForSceneReset() {
     sLoggedResolveFailure = false;
     sLoggedPortFailure = false;
     sLastDemoState = -1;
+    sRefreshTicks = 0;
     sMenu = {};
     for (auto& anchor : sAnchors) anchor.valid = false;
 }
@@ -3633,12 +3633,12 @@ static bool SafeToMove(void* p1, void* p2) {
 }
 static void SetupHealthP2() {
     if (patch0009::sP2Terminal || !patch0009::sP2HealthValid) {
-        sMessage = "P2 TERMINAL";
+        sMessage = "P2 DOWN";
         return;
     }
     patch0009::sP2Health = 1;
     p2hud::NotifyHealth(1, patch0009::sP2MaxHealth);
-    sMessage = "P2 HP IS 1";
+    sMessage = "P2 HP 1";
     Logging.Log("[OCoop] P0-LAB issue=%d P2 private health prepared 1/%d",
                 kIssue[ocoop::p0lab::Scenario(sMenu)], patch0009::sP2MaxHealth);
 }
@@ -3646,18 +3646,18 @@ static void Execute(void* p1, void* p2, ocoop::p0lab::Action action) {
     const unsigned idx = ocoop::p0lab::Scenario(sMenu);
     if (action == ocoop::p0lab::Action::Clear) {
         sAnchors[idx] = {};
-        sMessage = "MARK CLEARED";
+        sMessage = "CLEARED";
         Logging.Log("[OCoop] P0-LAB issue=%d marker cleared", kIssue[idx]);
         return;
     }
     if (action != ocoop::p0lab::Action::MarkOrReplay) return;
     if (!SafeToMove(p1, p2)) {
-        sMessage = "NEED SAFE GROUND";
+        sMessage = "GROUND";
         Logging.Log("[OCoop] P0-LAB action blocked: player ungrounded/captured/terminal");
         return;
     }
     if (idx >= 2 && (!patch0009::sP2HealthValid || patch0009::sP2Terminal)) {
-        sMessage = "P2 HP UNAVAILABLE";
+        sMessage = "NO HP";
         return;
     }
     auto getTrans = OcoopFn<const float* (*)(const void*)>(
@@ -3668,22 +3668,22 @@ static void Execute(void* p1, void* p2, ocoop::p0lab::Action action) {
     const bool replay = a.valid;
     if (!replay) {
         const float* p[2] = {getTrans(p1), getTrans(p2)};
-        if (!p[0] || !p[1]) { sMessage = "INVALID POSITION"; return; }
+        if (!p[0] || !p[1]) { sMessage = "BAD POS"; return; }
         for (int n = 0; n < 2; ++n)
             for (int d = 0; d < 3; ++d) {
                 const float v = p[n][d];
                 if (!(v >= -10000000.0f && v <= 10000000.0f)) {
-                    sMessage = "INVALID POSITION"; return;
+                    sMessage = "BAD POS"; return;
                 }
                 a.pos[n][d] = v;
             }
         a.valid = true;
-        sMessage = "MARKED - A REPLAY";
+        sMessage = "MARKED";
     } else {
         // Same-scene only; no persistent pointers and no save/quest mutation.
         setTrans(p1, a.pos[0]);
         setTrans(p2, a.pos[1]);
-        sMessage = "POSITION REPLAY";
+        sMessage = "REPLAYED";
     }
     if (idx >= 2) SetupHealthP2();
     Logging.Log("[OCoop] P0-LAB issue=%d %s p1=(%.0f,%.0f,%.0f) p2=(%.0f,%.0f,%.0f)",
@@ -3756,7 +3756,8 @@ static void Tick(void* actor) {
         if (sMenu.visible) {
             auto appear = OcoopFn<void (*)(void*)>(PatchOffsets::LayoutActorAppear);
             appear(sHud);
-            sMessage = "UP NEXT, A ARM";
+            sMessage = ocoop::p0lab::SelectedAction(sMenu) == ocoop::p0lab::Action::Clear
+                ? "A CLEAR" : (sAnchors[ocoop::p0lab::Scenario(sMenu)].valid ? "A REPLAY" : "A MARK");
         } else {
             auto kill = OcoopFn<void (*)(void*)>(PatchOffsets::AlLayoutActorKill);
             kill(sHud);
@@ -3765,6 +3766,9 @@ static void Tick(void* actor) {
         return;
     }
     if (!sMenu.visible) return;
+    // Some layout animations restore pane visibility after appear; reapply
+    // the debug-only presentation periodically, never touch native HUDs.
+    if (++sRefreshTicks >= 30) { sRefreshTicks = 0; Render(); }
     if (next) {
         ocoop::p0lab::Apply(sMenu, Command::Next);
         sMessage = ocoop::p0lab::SelectedAction(sMenu) == ocoop::p0lab::Action::Clear

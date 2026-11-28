@@ -3490,11 +3490,12 @@ struct Anchor {
     bool valid = false;
     float pos[2][3] = {};
 };
-static Anchor sAnchors[4] = {};
-static const char* kNames[4] = {
-    "2 METRO", "3 LAKE", "4 LAVA", "5 FALL"
+static Anchor sAnchors[ocoop::p0lab::ScenarioCount] = {};
+static void* sReloadActor = nullptr;
+static const char* kNames[ocoop::p0lab::ScenarioCount] = {
+    "2 METRO", "3 LAKE", "4 LAVA", "5 FALL", "11 PYLON"
 };
-static const int kIssue[4] = {2, 3, 4, 5};
+static const int kIssue[ocoop::p0lab::ScenarioCount] = {2, 3, 4, 5, 11};
 static const char* sMessage = "A MARK";
 static unsigned sRefreshTicks = 0;
 static bool sDecideHeld = false;
@@ -3529,7 +3530,7 @@ static void Render() {
     const unsigned scenario = ocoop::p0lab::Scenario(sMenu);
     // Use only the two score rows: the original adjacent label panes are
     // too narrow and overlap when filled with debug strings.
-    ToUtf16(sNameText, 48, kNames[scenario]);
+    ToUtf16(sNameText, 48, ocoop::p0lab::SelectedAction(sMenu) == ocoop::p0lab::Action::ReloadStage ? "RELOAD" : kNames[scenario]);
     ToUtf16(sMsgText, 48, sMenu.armed ? "CONFIRM" : sMessage);
     auto show = OcoopFn<void (*)(void*, const char*)>(PatchOffsets::LayoutShowPane);
     const char* panes[] = {"All", "CoinP1", "CoinP1Sh", "CoinP2", "CoinP2Sh"};
@@ -3582,6 +3583,7 @@ static void Create(void* owner, const void* initInfo) {
 }
 static void DetachForSceneReset() {
     sOwner = nullptr; sHud = nullptr;
+    sReloadActor = nullptr;
     sHiddenBySceneEnd = false;
     sDecideHeld = false;
     sTickReady = false;
@@ -3595,6 +3597,7 @@ static void DetachForSceneReset() {
 static void End(void* owner) {
     if (owner != sOwner) return;
     ocoop::p0lab::Apply(sMenu, Command::Cancel);
+    sReloadActor = nullptr;
     if (IsPtr8((uintptr_t)sHud)) {
         auto kill = OcoopFn<void (*)(void*)>(PatchOffsets::AlLayoutActorKill);
         kill(sHud);
@@ -3631,6 +3634,14 @@ static bool SafeToMove(void* p1, void* p2) {
            !a.captured && !b.captured && a.grounded && b.grounded &&
            !a.inWater && !b.inWater && a.IsSafe() && b.IsSafe();
 }
+static const char* ActionPrompt() {
+    using ocoop::p0lab::Action;
+    switch (ocoop::p0lab::SelectedAction(sMenu)) {
+        case Action::ReloadStage: return ocoop::config::Get().debugNativeReloadEnabled ? "A RELOAD" : "DISABLED";
+        case Action::Clear: return "A CLEAR";
+        default: return sAnchors[ocoop::p0lab::Scenario(sMenu)].valid ? "A REPLAY" : "A MARK";
+    }
+}
 static void SetupHealthP2() {
     if (patch0009::sP2Terminal || !patch0009::sP2HealthValid) {
         sMessage = "P2 DOWN";
@@ -3644,6 +3655,19 @@ static void SetupHealthP2() {
 }
 static void Execute(void* p1, void* p2, ocoop::p0lab::Action action) {
     const unsigned idx = ocoop::p0lab::Scenario(sMenu);
+    if (action == ocoop::p0lab::Action::ReloadStage) {
+#if OCOOP_GAME == 130 && PATCH_0052_ENABLED
+        if (!ocoop::config::Get().debugNativeReloadEnabled) { sMessage = "DISABLED"; return; }
+        if (!SafeToMove(p1, p2)) { sMessage = "GROUND"; return; }
+        if (patch0052::sKillPending || sReloadActor) { sMessage = "BUSY"; return; }
+        sReloadActor = p1;
+        sMessage = "QUEUED";
+        Logging.Log("[OCoop] P0-LAB native reload queued p1=%p", p1);
+#else
+        sMessage = "UNSUPPORTED";
+#endif
+        return;
+    }
     if (action == ocoop::p0lab::Action::Clear) {
         sAnchors[idx] = {};
         sMessage = "CLEARED";
@@ -3656,7 +3680,7 @@ static void Execute(void* p1, void* p2, ocoop::p0lab::Action action) {
         Logging.Log("[OCoop] P0-LAB action blocked: player ungrounded/captured/terminal");
         return;
     }
-    if (idx >= 2 && (!patch0009::sP2HealthValid || patch0009::sP2Terminal)) {
+    if (ocoop::p0lab::NeedsP2Health(idx) && (!patch0009::sP2HealthValid || patch0009::sP2Terminal)) {
         sMessage = "NO HP";
         return;
     }
@@ -3685,7 +3709,7 @@ static void Execute(void* p1, void* p2, ocoop::p0lab::Action action) {
         setTrans(p2, a.pos[1]);
         sMessage = "REPLAYED";
     }
-    if (idx >= 2) SetupHealthP2();
+    if (ocoop::p0lab::NeedsP2Health(idx)) SetupHealthP2();
     Logging.Log("[OCoop] P0-LAB issue=%d %s p1=(%.0f,%.0f,%.0f) p2=(%.0f,%.0f,%.0f)",
                 kIssue[idx], replay ? "replay" : "mark",
                 a.pos[0][0], a.pos[0][1], a.pos[0][2],
@@ -3734,6 +3758,7 @@ static void Tick(void* actor) {
         Logging.Log("[OCoop] P0-LAB input minus=%d up=%d confirm=%d demo=%d hidden=%d",
                     (int)toggle, (int)next, (int)confirm, (int)demo, (int)sHiddenBySceneEnd);
     if (demo) {
+        sReloadActor = nullptr;
         ocoop::p0lab::Apply(sMenu, Command::Cancel);
         return;
     }
@@ -3752,12 +3777,12 @@ static void Tick(void* actor) {
         }
     }
     if (toggle) {
+        sReloadActor = nullptr;
         ocoop::p0lab::Apply(sMenu, Command::Toggle);
         if (sMenu.visible) {
             auto appear = OcoopFn<void (*)(void*)>(PatchOffsets::LayoutActorAppear);
             appear(sHud);
-            sMessage = ocoop::p0lab::SelectedAction(sMenu) == ocoop::p0lab::Action::Clear
-                ? "A CLEAR" : (sAnchors[ocoop::p0lab::Scenario(sMenu)].valid ? "A REPLAY" : "A MARK");
+            sMessage = ActionPrompt();
         } else {
             auto kill = OcoopFn<void (*)(void*)>(PatchOffsets::AlLayoutActorKill);
             kill(sHud);
@@ -3770,9 +3795,9 @@ static void Tick(void* actor) {
     // the debug-only presentation periodically, never touch native HUDs.
     if (++sRefreshTicks >= 30) { sRefreshTicks = 0; Render(); }
     if (next) {
+        sReloadActor = nullptr;
         ocoop::p0lab::Apply(sMenu, Command::Next);
-        sMessage = ocoop::p0lab::SelectedAction(sMenu) == ocoop::p0lab::Action::Clear
-            ? "A CLEAR" : (sAnchors[ocoop::p0lab::Scenario(sMenu)].valid ? "A REPLAY" : "A MARK");
+        sMessage = ActionPrompt();
         Render();
     } else if (confirm) {
         const auto result = ocoop::p0lab::Apply(sMenu, Command::Confirm);
@@ -3780,6 +3805,55 @@ static void Tick(void* actor) {
         Render();
     }
 }
+#if OCOOP_GAME == 130 && PATCH_0052_ENABLED
+// Consume on the existing sequence hook, not from a live actor callback.
+// No custom ChangeStageInfo, arbitrary stage IDs or story flag writes.
+static bool PrepareNativeReload(void* sequence) {
+    if (!sReloadActor) return false;
+    void* expected = sReloadActor;
+    sReloadActor = nullptr;
+    void* scene = nullptr;
+    void* holder = nullptr;
+    if (IsPtr8((uintptr_t)sequence)) {
+        scene = *(void**)((uintptr_t)sequence + 0xb0);
+        holder = *(void**)((uintptr_t)sequence + 0xb8);
+    }
+    bool same = false, safe = false, idle = false, ready = false;
+    if (IsPtr8((uintptr_t)scene) && IsPtr8((uintptr_t)holder)) {
+        auto getHolder = OcoopFn<void* (*)(const void*)>(PatchOffsets::AlGetScenePlayerHolder);
+        auto getPlayer = OcoopFn<void* (*)(const void*, int)>(PatchOffsets::AlGetPlayerActorFromHolder);
+        void* ph = getHolder(scene);
+        if (IsPtr8((uintptr_t)ph)) {
+            void* p1 = getPlayer(ph, 0);
+            void* p2 = getPlayer(ph, 1);
+            same = p1 == expected && *((unsigned char*)scene + 0x28) != 0;
+            safe = same && SafeToMove(p1, p2);
+        }
+        idle = !patch0052::sKillPending && *((unsigned char*)holder + 0x49) == 0;
+        const uintptr_t file = *(const uintptr_t*)((uintptr_t)holder + PatchOffsets::GameDataHolderFile);
+        if (IsPtr8(file)) {
+            ready = *(const uintptr_t*)(file + PatchOffsets::GameDataFileHolder) == (uintptr_t)holder &&
+                *((unsigned char*)holder + PatchOffsets::GameDataHolderRestartGuard) == 0;
+        }
+    }
+    auto saveDone = OcoopFn<bool (*)()>(PatchOffsets::AlIsDoneSaveDataSequence);
+    const ocoop::p0lab::ReloadGuards guards{
+        ocoop::config::Get().debugMenuEnabled && ocoop::config::Get().debugNativeReloadEnabled,
+        patch0052::IsTwoPlayer(), same, safe && !sHiddenBySceneEnd,
+        saveDone(), idle, ready};
+    if (!guards.Allowed()) {
+        sMessage = "BLOCKED";
+        Render();
+        Logging.Log("[OCoop] P0-LAB reload rejected opt=%d two=%d same=%d safe=%d save=%d idle=%d ready=%d",
+            (int)guards.optedIn,(int)guards.twoPlayers,(int)guards.sameScene,(int)guards.safePlayers,
+            (int)guards.saveIdle,(int)guards.transitionIdle,(int)guards.restartReady);
+        return false;
+    }
+    patch0052::RestartStageV130(holder);
+    Logging.Log("[OCoop] P0-LAB native reload prepared; handing off to PATCH-0052");
+    return true;
+}
+#endif
 } // namespace p0debug
 
 /* char* fields need no alignment; statically known to be C strings
@@ -6420,6 +6494,10 @@ HOOK_DEFINE_TRAMPOLINE(Patch0052RequestModeAndRestart) {
 
 HOOK_DEFINE_TRAMPOLINE(Patch0052SequenceKillSceneForRestart) {
     static void Callback(void* sequence) {
+#if OCOOP_GAME == 130
+        if (!patch0052::sKillPending && p0debug::PrepareNativeReload(sequence))
+            patch0052::sKillPending = true;
+#endif
         if (!patch0052::sKillPending) {
             Orig(sequence);
             return;

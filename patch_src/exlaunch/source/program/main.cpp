@@ -3497,6 +3497,10 @@ static const char* kNames[4] = {
 static const int kIssue[4] = {2, 3, 4, 5};
 static const char* sMessage = "UP NEXT, A ARM";
 static bool sDecideHeld = false;
+static bool sTickReady = false;
+static bool sLoggedResolveFailure = false;
+static bool sLoggedPortFailure = false;
+static int sLastDemoState = -1;
 static char16_t sNameText[48] = {};
 static char16_t sMsgText[48] = {};
 static char16_t sIssueText[12] = {};
@@ -3528,6 +3532,10 @@ static void Render() {
     sIssueText[0] = u'#';
     sIssueText[1] = u'0' + kIssue[scenario];
     sIssueText[2] = 0;
+    auto show = OcoopFn<void (*)(void*, const char*)>(PatchOffsets::LayoutShowPane);
+    const char* panes[] = {"All", "LblPlayer1", "LblPlayer1Sh", "LblPlayer2", "LblPlayer2Sh",
+                           "CoinP1", "CoinP1Sh", "CoinP2", "CoinP2Sh"};
+    for (const char* pane : panes) show((void*)((uintptr_t)sHud + 0x08), pane);
     SetTextPair("LblPlayer1", "LblPlayer1Sh", clear ? u"CLEAR MARK" : u"P0 TEST LAB");
     SetTextPair("LblPlayer2", "LblPlayer2Sh", sIssueText);
     SetTextPair("CoinP1", "CoinP1Sh", sNameText);
@@ -3565,7 +3573,7 @@ static void Create(void* owner, const void* initInfo) {
         PatchOffsets::LayoutSetPaneLocalTrans2);
     ctor(sHud, "[OCoop] Developer P0 Test Lab");
     init(sHud, initInfo, "OCoopScoreBoard", nullptr);
-    const Vec2 pos = {-340.0f, -160.0f};
+    const Vec2 pos = {0.0f, 0.0f}; // known scoreboard default; diagnose visibility first
     setPaneTrans((void*)((uintptr_t)sHud + 0x08), "All", pos);
     HideDecorations();
     Render();
@@ -3577,6 +3585,10 @@ static void DetachForSceneReset() {
     sOwner = nullptr; sHud = nullptr;
     sHiddenBySceneEnd = false;
     sDecideHeld = false;
+    sTickReady = false;
+    sLoggedResolveFailure = false;
+    sLoggedPortFailure = false;
+    sLastDemoState = -1;
     sMenu = {};
     for (auto& anchor : sAnchors) anchor.valid = false;
 }
@@ -3588,6 +3600,7 @@ static void End(void* owner) {
         kill(sHud);
     }
     sHiddenBySceneEnd = true;
+    Logging.Log("[OCoop] P0-LAB scene layout end; menu temporarily hidden");
 }
 static void OnLayoutStart(void* owner) {
     if (owner != sOwner || !IsPtr8((uintptr_t)sHud) || !sHiddenBySceneEnd) return;
@@ -3595,14 +3608,15 @@ static void OnLayoutStart(void* owner) {
     if (sMenu.visible) appear(sHud);
     sHiddenBySceneEnd = false;
     Render();
+    Logging.Log("[OCoop] P0-LAB scene layout start; visible=%d", (int)sMenu.visible);
 }
 static bool InterceptMapOpen() {
-    return ocoop::config::Get().debugMenuEnabled && IsPtr8((uintptr_t)sHud);
+    return ocoop::config::Get().debugMenuEnabled && IsPtr8((uintptr_t)sHud) && sTickReady && !sHiddenBySceneEnd && sLastDemoState == 0;
 }
 static bool ResolvePlayers(void* self, void** p1, void** p2) {
     if (!IsPtr8((uintptr_t)self)) return false;
     auto getPlayer = OcoopFn<void* (*)(const void*, int)>(
-        PatchOffsets::AlGetPlayerActor);
+        PatchOffsets::AlTryGetPlayerActor);
     *p1 = getPlayer(self, 0);
     *p2 = getPlayer(self, 1);
     return IsPtr8((uintptr_t)*p1) && IsPtr8((uintptr_t)*p2) && *p1 == self;
@@ -3682,10 +3696,26 @@ static void Tick(void* actor) {
         !IsPtr8((uintptr_t)sHud) || !IsPtr8((uintptr_t)actor)) return;
     void* p1 = nullptr;
     void* p2 = nullptr;
-    if (!ResolvePlayers(actor, &p1, &p2)) return;
+    if (!ResolvePlayers(actor, &p1, &p2)) {
+        if (!sLoggedResolveFailure && (!IsPtr8((uintptr_t)p1) || !IsPtr8((uintptr_t)p2))) {
+            sLoggedResolveFailure = true;
+            Logging.Log("[OCoop] P0-LAB player lookup pending actor=%p p1=%p p2=%p", actor, p1, p2);
+        }
+        return;
+    }
     auto getPort = OcoopFn<int (*)(int)>(PatchOffsets::AlGetPlayerControllerPort);
     const int port = getPort(0);
-    if (port < 0) return;
+    if (port < 0) {
+        if (!sLoggedPortFailure) {
+            sLoggedPortFailure = true;
+            Logging.Log("[OCoop] P0-LAB P1 controller port unavailable");
+        }
+        return;
+    }
+    if (!sTickReady) {
+        sTickReady = true;
+        Logging.Log("[OCoop] P0-LAB tick ready p1=%p p2=%p port=%d", p1, p2, port);
+    }
     auto minus = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerMinus);
     auto up = OcoopFn<bool (*)(int)>(PatchOffsets::AlIsPadTriggerUp);
     auto decide = OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsTriggerUiDecide);
@@ -3693,11 +3723,34 @@ static void Tick(void* actor) {
     const bool confirm = decideNow && !sDecideHeld;
     sDecideHeld = decideNow;
     auto isActiveDemo = OcoopFn<bool (*)(const void*)>(PatchOffsets::RsIsActiveDemoActor);
-    if (sHiddenBySceneEnd || isActiveDemo(p1) || isActiveDemo(p2)) {
+    const bool demo = isActiveDemo(p1) || isActiveDemo(p2);
+    if (sLastDemoState != (int)demo) {
+        sLastDemoState = (int)demo;
+        Logging.Log("[OCoop] P0-LAB demo=%d sceneHidden=%d", (int)demo, (int)sHiddenBySceneEnd);
+    }
+    const bool toggle = minus(port);
+    const bool next = up(port);
+    if (toggle || next || confirm)
+        Logging.Log("[OCoop] P0-LAB input minus=%d up=%d confirm=%d demo=%d hidden=%d",
+                    (int)toggle, (int)next, (int)confirm, (int)demo, (int)sHiddenBySceneEnd);
+    if (demo) {
         ocoop::p0lab::Apply(sMenu, Command::Cancel);
         return;
     }
-    const bool toggle = minus(port);
+    if (sHiddenBySceneEnd) {
+        // Same live scene, same owner; mirror the existing scoreboard's
+        // post-demo recovery fallback instead of waiting for a start hook.
+        OnLayoutStart(sOwner);
+    }
+    if (sMenu.visible) {
+        auto active = OcoopFn<bool (*)(const void*)>(PatchOffsets::AlIsActiveLayout);
+        if (!active(sHud)) {
+            auto appear = OcoopFn<void (*)(void*)>(PatchOffsets::LayoutActorAppear);
+            appear(sHud);
+            Render();
+            Logging.Log("[OCoop] P0-LAB inactive layout restored");
+        }
+    }
     if (toggle) {
         ocoop::p0lab::Apply(sMenu, Command::Toggle);
         if (sMenu.visible) {
@@ -3712,7 +3765,7 @@ static void Tick(void* actor) {
         return;
     }
     if (!sMenu.visible) return;
-    if (up(port)) {
+    if (next) {
         ocoop::p0lab::Apply(sMenu, Command::Next);
         sMessage = ocoop::p0lab::SelectedAction(sMenu) == ocoop::p0lab::Action::Clear
             ? "A CLEAR" : (sAnchors[ocoop::p0lab::Scenario(sMenu)].valid ? "A REPLAY" : "A MARK");

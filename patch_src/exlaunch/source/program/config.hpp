@@ -20,6 +20,7 @@ struct Settings {
     bool bubbleWaterCountsAsGround;
 
     bool debugMenuEnabled;
+    bool debugNativeReloadEnabled;
     float debugHudX;
     float debugHudY;
 
